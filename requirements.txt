@@ -1,0 +1,33 @@
+# Core ML dependencies
+torch>=2.0.0
+transformers>=4.37.2
+datasets
+accelerate
+deepspeed>=0.14.0
+bitsandbytes
+
+# Training and optimization
+ray[default]
+wandb
+tqdm
+torchmetrics
+einops
+
+# RLHF specific
+peft
+sentencepiece
+protobuf
+numpy
+scipy
+pandas
+
+# Utilities
+jsonlines
+isort
+openai
+
+# Optional dependencies (commented out)
+# loralib
+# transformers_stream_generator
+# mpi4py
+# optimum
