@@ -157,6 +157,11 @@ SEL="--data $DATA --select_from logs/select_b0.jsonl --acc_min 0.1 --acc_max 0.9
 
 **Step 2a. Task 2: B0/B1/B2 sweep (done).** Run `nohup ./task2.sh > /tmp/likhit_task2.log 2>&1 &` (see [task2.sh](task2.sh)), then `python -m tree_alloc.task2_report --logs logs/task2 --out results/task2`. Results are in §5.
 
+**Step 2a′. Task 2 on 500 unfiltered Omni-MATH problems (done).** Run `nohup ./task2_omni.sh > /tmp/likhit_task2_omni.log 2>&1 &` (see [task2_omni.sh](task2_omni.sh)). Results are in §5.2.
+- It is safe to stop and re-run: jobs resume by problem id, and finished jobs are dropped from the queue.
+- A worker takes a GPU only after it has been free for 5 minutes, and keeps it between jobs.
+- On the server, the logs are in `mid_submission_likhit/logs/task2_omni/` (the folder was renamed on 2026-09-25).
+
 **Step 2b. Task 3: Phase I table at n = 16 leaves (not started).** Use the same `SEL` as `task2.sh`, then compare against the Task 2 logs.
 
 ```bash
@@ -239,24 +244,110 @@ $R report --p1 logs/p1_12.jsonl --oracle logs/oracle_12.jsonl --trees logs/p2_12
 **Findings.**
 1. **The token savings from trees replicate (Fig. 4).** Branching reuses shared prefixes. The 16-leaf trees cost 8.8–10.8k tokens versus 13.1k for 16 i.i.d. chains (18–33% fewer). The 64-leaf trees cost 29–38k versus 52.5k (27–44% fewer). The deep config (8,1,7,1) is the cheapest.
 2. **EPTree beats i.i.d. at matched tokens, but only slightly (Fig. 5).** It is +1 to +1.8 PassRate points in 5 of 7 configs, and slightly below in (4,1,3,1) at −1.2 and (8,7,1,1) at −0.4. The direction matches the paper, but the effect is small because PassRate saturates: i.i.d. pass@16 is already 95%.
-3. **Entropy vs. random forking (Table 2) is not a clear win at this scale.** PassRate differences are within noise (only (16,3,1,1) is borderline). Entropy forking consistently gives **more distinct answers** (+0.4 to +0.8) and **lower per-leaf accuracy** (up to −0.025): it explores more, and the extra branches are more often wrong. It also uses 5–6% more tokens than random at the same config, consistent with its earlier forks (mean relative fork position 0.43 vs. 0.45), which leave longer continuations to generate. The paper's PassRate advantage for entropy forking is **not reproduced** with this 1.5B model and single seed.
+3. **Entropy vs. random forking (Table 2) is not a clear win at this scale.** PassRate differences are within noise (only (16,3,1,1) is borderline). Entropy forking consistently gives **more distinct answers** (+0.4 to +0.8) and **lower per-leaf accuracy** (up to −0.025): it explores more, and the extra branches are more often wrong. It also uses 5–6% more tokens than random at the same config, consistent with its earlier forks (mean relative fork position 0.43 vs. 0.45), which leave longer continuations to generate. The result is **inconclusive rather than contradictory**. The paper's own Table 2 gap is small: +2.1 at (6,2,1,2) and +1.0 at (8,4,2,2), from one run on Omni-MATH-500 with no CIs. That is the same size as our unsaturated point estimates (+1.6, +0.8), and smaller than a 243-problem set can resolve. The paper also found random forking used *more* tokens than EPTree (24.2k vs 22.3k); here it used fewer.
 4. **Forking tokens (Fig. 7):** mostly the start of inline math (`␣\(`, `␣\`), function words (`␣the`, `␣we`, `␣and`) and punctuation (`,`, `.`, `:\n`). These are points where the model picks how to phrase or start the next step. The distribution is flat: the top 10 cover only about 13% of forks. Mean surprisal at an EPTree fork is **3.75 nats** (p ≈ 0.02), versus 0.14 for random forks.
 5. **Where forks happen (Fig. 8):** random forks are spread evenly. EPTree forks cluster at the **start** of the response (0–15%) and just before the **end** (80–90%, right before the 10% tail mask, which is why the curve drops to zero after 0.9).
 6. **Almost every tree has both correct and incorrect leaves** (86–100%, because of the 0.1–0.9 selection band), so the trees give a usable RL signal.
 
+### 5.1 Add-on analyses on the filtered set
+
+Full tables: [results/task2/extra.md](results/task2/extra.md). Source: [task2_extra.py](tree_alloc/task2_extra.py). Everything is computed offline from the same logs.
+
+**A. Tree vs. i.i.d., paired per problem.** i.i.d. cost for each problem is k × that problem's mean chain length; values are unbiased pass@k, with 95% bootstrap CIs.
+
+| Config | Δ vs. i.i.d., same tokens | Δ vs. i.i.d., same leaves |
+|---|---|---|
+| EPTree (4,3,1,1) / (8,1,1,1) | +1.8 [−1.0, +4.3] / +0.8 [−1.7, +3.4] | −1.2 / −0.8 |
+| EPTree (4,1,3,1), deep | −1.2 [−4.7, +1.9] | −4.9 [−8.6, −1.6] |
+| EPTree (6,2,1,2) / random | +1.5 [−0.1, +3.0] / +1.7 [−0.2, +3.8] | −0.1 / −0.1 |
+| EPTree (16,3,1,1) / random | **+1.0 [+0.3, +2.1]** / +0.1 [−1.4, +1.5] | +0.4 / −0.4 |
+| EPTree (8,1,7,1) / (8,7,1,1) | +1.2 [+0.0, +2.6] / −0.6 [−2.2, +0.7] | +0.0 / −1.2 |
+
+At the same token budget, trees do as well as or slightly better than i.i.d. sampling: +1 to +2 points, significant only for (16,3,1,1). At the same number of leaves they do as well or worse, because leaves that share prefixes are correlated. **Any tree advantage comes from the token savings, not from better leaves.**
+
+**B. Sibling disagreement.**
+- A fork's outcome differs from the original it branched off in **20–26%** of cases. Two independent chains differ in **34.4%**, since forks share a prefix with the original.
+- Raw EPTree − random differences are +0.6, +4.3 and +2.0 points (the last two significant). **Most of this is fork position:** earlier forks share less prefix, and EPTree forks earlier.
+- Reweighting random forks to EPTree's position mix gives **23.6% vs. EPTree's 24.3%** (raw random: 21.8%).
+- By position band: EPTree is about 1 point *lower* in the first 40% of the response and 2–3 points *higher* after 40%.
+- Disagreement falls steeply with position: **32% in the first fifth → 8–10% in the last fifth.**
+
+**C. Continuation length.** A fork's new branch is as long as the part of the original it replaces (median ratio 1.00–1.01), and under 0.5% of forks get truncated. EPTree's extra ~5% of tokens come entirely from forking earlier: its forks cut off 505–519 remaining tokens, versus 451–480 for random forks.
+
+**D. Estimating V(root) against the policy's pass@1 of 0.458.**
+- The **leaf mean** (the proposal's V(v), eq. 2) is **biased low under EPTree**: −0.007 to −0.037, significant in 4 of 7 configs. The worst case is the deep (8,1,7,1) at −0.037 [−0.050, −0.025].
+- Under **random forking it is unbiased**: −0.007 to +0.005, with no config significant.
+- The child mean reduces the bias of the deep config (−0.037 → −0.013), but not consistently elsewhere.
+- The roots-only estimate is unbiased by construction. One of its 10 CIs excludes 0, which fits chance at 95%.
+- Despite the bias, the leaf mean still has the **lowest error at the root** (MAE 0.065–0.121, vs. 0.088–0.170 for roots-only), because extra leaves cut variance more than the bias costs.
+
+**What this means for the proposal:**
+1. **Any fork-selection rule that looks at the chain biases the leaf mean.** EPTree does, and P1's continuation-cross-entropy rule will too. Task 6 should report the roots-only and child-mean estimators alongside the leaf mean.
+2. **Position confounds consequentiality.** Early forks flip outcomes about 3× more often than late ones. P2 variants should be compared against a *position-matched* random baseline, not only uniform random.
+3. **Token surprisal is a weak consequentiality signal once position is controlled.** That raises the bar for the proposal's continuation-cross-entropy and δ signals, and makes Task 5's oracle the right test.
+
+### 5.2 Replication set: 500 unfiltered Omni-MATH problems
+
+**Why a second set.** The paper evaluates on Omni-MATH-500, unfiltered. Their i.i.d. PassRate is 52.4% at 16 chains and 67.4% at 64, so there is room for a method to win. On our filtered set, PassRate was saturated (95% at 16 chains), which hides any sampler effect.
+
+**Setup.** A random 500 from Omni-MATH (seed 0, `data/omni_math_500_seed0.jsonl`), same model and sampling as §5, no accuracy filter. Some Omni-MATH answers are free text, which our rule-based checker can't match (the paper used an LLM judge). That lowers absolute PassRate equally for every method.
+
+Full tables: [results/task2_omni/results.md](results/task2_omni/results.md) and [results/task2_omni/extra.md](results/task2_omni/extra.md). Figures: [Fig. 5](results/task2_omni/fig5_passrate_vs_tokens.png), [Fig. 4](results/task2_omni/fig4_responses_diversity_vs_tokens.png), [Fig. 7](results/task2_omni/fig7_top_fork_tokens.png), [Fig. 8](results/task2_omni/fig8_fork_position.png).
+
+**i.i.d. PassRate:** 26.0% at 1 chain, 39.9% at 8, **44.3% at 16**, 53.4% at 64 (paper, 14B model: 52.4% at 16, 67.4% at 64). 233 of the 500 problems are never solved in 64 samples.
+
+**Table 2 replication: entropy vs. random forking at the same (M,N,L,T).** Paired 95% bootstrap CIs.
+
+| (M,N,L,T) | Leaves | EPTree | Random | Δ [95% CI] | Tokens EPTree / random | Paper Δ |
+|---|---|---|---|---|---|---|
+| (4,1,1,1) | 8 | 40.0% | 38.8% | +1.2 [−1.2, +3.6] | 4.7k / 4.7k | – |
+| (4,3,1,1) | 16 | 44.6% | 44.8% | −0.2 [−3.0, +2.6] | 8.4k / 8.1k | – |
+| (6,2,1,2) | 30 | 46.6% | 46.0% | +0.6 [−1.8, +3.0] | 15.0k / 14.9k | +2.1 (56.9 vs 54.8) |
+| (8,4,2,2) | 136 | **57.6%** | 55.4% | +2.2 [−0.2, +4.8] | 55.9k / 56.0k | +1.0 (71.0 vs 70.0) |
+
+**Trees vs. i.i.d. at the same tokens (Fig. 5).** Paired per problem; i.i.d. cost = k × that problem's mean chain length.
+
+| Config | EPTree | Random |
+|---|---|---|
+| (2,1,1,1), 4 leaves | +0.6 [−1.2, +2.5] | – |
+| (2,3,1,1), 8 leaves | **+2.7 [+0.8, +4.8]** | – |
+| (4,1,1,1), 8 leaves | +1.8 [−0.1, +3.7] | +0.5 [−1.1, +2.2] |
+| (4,3,1,1), 16 leaves | **+2.7 [+0.5, +5.0]** | **+3.0 [+1.0, +5.1]** |
+| (6,2,1,2), 30 leaves | +0.9 [−0.9, +2.7] | +0.4 [−1.6, +2.2] |
+| (8,4,2,2), 136 leaves | **+4.3 [+1.9, +6.7]*** | +2.0 [−0.8, +4.8]* |
+
+\* (8,4,2,2) costs as much as about 76 i.i.d. chains, but only 64 were sampled, so these Δs are against pass@64 and slightly overstated. Extrapolating i.i.d. to 76 chains costs roughly 1 point.
+
+**Findings (replication set).**
+1. **Trees beat i.i.d. at the same token budget (Fig. 5 replicated).** Δ is positive in all 10 configs (+0.4 to +4.3; roughly +3 at most once the (8,4,2,2) pass@64 cap is accounted for), and significant in 4. The gain comes from shared prefixes: random forking gets it too, e.g. +3.0 at (4,3,1,1).
+2. **Entropy vs. random forking (Table 2) now has the paper's direction.** EPTree is ahead in 3 of 4 configs (+1.2, +0.6, +2.2; −0.2 once), and the largest gap is at the largest tree. Every CI still includes 0; (8,4,2,2) is borderline (+2.2 [−0.2, +4.8]). The paper's gaps (+2.1, +1.0) are the same size and inside our CIs. Unlike the paper, random forking did *not* cost more tokens here.
+3. **Consequentiality after controlling for position:**
+   - Reweighting random forks to EPTree's position mix gives **6.8% vs. EPTree's 7.3%** disagreement with the original (+0.5 points).
+   - At (8,4,2,2) the per-problem gap, +0.6 [+0.2, +1.0], is significant but tiny.
+   - Early forks change the outcome about twice as often as late ones (9.5% vs. 5.1%).
+4. **The bias in the V(root) estimate is negligible on this set** (all within ±0.008 of pass@1; the largest, −0.005, is at (8,4,2,2)). A problem where every answer is wrong can't produce any bias, and 233 of the 500 are never solved.
+5. **Fig. 8 matches the paper:** EPTree's fork positions are roughly uniform (mean 0.47), while random forks lean later. **Fig. 7:** ` the`, ` \(`, ` \`, `,`, ` a`, ` we`, ` and` — like the paper minus "Wait"/"But", which this model doesn't write. The mean surprisal at an EPTree fork is 4.8 nats.
+6. **Only 16–50% of trees have both correct and incorrect leaves** here, versus 86–100% on the filtered set, so the filtered set stays the right one for Tasks 3–5.
+
+**Bottom line for Task 2.** The paper's sampling results replicate in direction with a 1.5B model:
+- Trees beat i.i.d. at matched tokens.
+- Entropy forking beats random by about 1–2 points.
+- Fork positions are roughly uniform.
+
+The entropy-vs-random gap is below what 500 problems and one seed can resolve. Pooling configs or adding seeds would be needed to claim it.
+
 **Implications for Task 3 (not started):**
-- PassRate is already saturated at 16 leaves on these problems. For the Phase I comparison, also report metrics that don't saturate: pass@k at 8 leaves, distinct answers, `mixed_branch_frac`.
-- Alternatively, use a harder subset (B0 accuracy 0.1–0.5).
-- Single-seed differences of 1–2 points are within noise at 243 problems, so use paired bootstrap CIs throughout.
+- PassRate is already saturated at 16 leaves on the filtered set. For the Phase I comparison, also report metrics that don't saturate: pass@k at 8 leaves, distinct answers, `mixed_branch_frac`. Alternatively, use a harder subset (B0 accuracy 0.1–0.5), or report PassRate on the Omni-MATH set.
+- Differences of 1–2 points are within noise at 243–500 problems, so use paired bootstrap CIs throughout.
 
 ## 6. Status
 
 | Task | Status |
 |---|---|
 | 1. Harness | ✅ Done and checked on the real model (§4) |
-| 2. Replicate EPTree | ✅ Done (§5). Fig. 7 used Qwen2.5-Math-1.5B; the R1-Distill "Wait"-token analysis was deferred as planned. |
+| 2. Replicate EPTree | ✅ Done on both sets: filtered OlympiadBench (§5, §5.1) and unfiltered Omni-MATH (§5.2). Fig. 7 used Qwen2.5-Math-1.5B; the R1-Distill "Wait"-token analysis was deferred as planned. |
 | 3–6 | Code written and unit-tested. Not run yet. |
 
 **Still open:**
-- Download Omni-MATH (OlympiadBench was used instead).
 - Choose the τ grid for P2 before Task 4.
+- Optional: extend i.i.d. sampling to 128 chains so (8,4,2,2) has an exact token-matched baseline.

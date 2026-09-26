@@ -71,7 +71,6 @@ def rng_for(seed, *parts) -> random.Random:
 
 # ---------------------------------------------------------------- commands
 def cmd_gen(a):
-    gen, ver = make_backend(a)
     problems = load_problems(a.data)
     if a.select_from:  # keep problems whose B0 accuracy is in [acc_min, acc_max]
         acc = {r["problem_id"]: mean([n["reward"] for n in r["nodes"]]) for r in read_jsonl(a.select_from)}
@@ -81,6 +80,9 @@ def cmd_gen(a):
     todo = [p for p in problems if p.id not in done]
     cfg = {k: v for k, v in vars(a).items() if k not in ("func",)}
     print(f"[gen] {a.method}: {len(todo)} problems to run ({len(done)} already in {a.out})")
+    if not todo:  # finished job: exit before paying for model load (makes resuming a queue cheap)
+        return
+    gen, ver = make_backend(a)
     for batch in chunks(todo, a.chunk):
         t0 = time.time()
         trees = [Tree(p.id, gen.encode_prompt(p.question), p.answer, {"method": a.method, "cfg": cfg})

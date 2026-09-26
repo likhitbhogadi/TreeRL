@@ -182,7 +182,7 @@ def plot_all(out, iid, b2_rows, b1_rows, fork_b2, fork_b1, tok_decode):
                              [(r["tokens"], 100 * r["pass"]) for r in b2_rows + b1_rows + pts]))
         _log_axis(ax)
         _style(ax, "Generated tokens per problem (log scale)", "PassRate (% problems with ≥1 correct leaf)")
-        ax.set_title("Zoom: tree budgets (16-64 leaves)" if zoom else "PassRate vs. generation budget",
+        ax.set_title("Zoom: tree configs" if zoom else "PassRate vs. generation budget",
                      color=INK, fontsize=12, loc="left")
     axes[0].legend(frameon=False, fontsize=9, labelcolor=INK2, loc="lower right")
     fig.tight_layout()
