@@ -341,6 +341,24 @@ def check_equality(expr1: str, expr2: str, urls):
     return response.lower().strip() == "yes"
 
 
+def _local_check(response, label):
+    """Normalized string match of the last \\boxed{} for standalone runs without judge servers.
+    Called from evaluate_trees' thread pool, where math_verify's signal-based timeout can't work and
+    SymPy can hang forever on some answers, so no symbolic check here; callers re-grade leaves
+    properly in the main thread."""
+    i = response.rfind("\\boxed{")
+    if i < 0:
+        return None, 0
+    depth, j = 0, i + len("\\boxed")
+    for k in range(j, len(response)):
+        depth += {"{": 1, "}": -1}.get(response[k], 0)
+        if depth == 0:
+            break
+    pred = response[j + 1:k]
+    norm = lambda s: re.sub(r"\s+|\$|\\left|\\right|\\!|\\,", "", s).replace("\\dfrac", "\\frac").rstrip(".")  # noqa: E731
+    return pred, int(norm(pred) == norm(label))
+
+
 def check_result(
     question,
     response,
@@ -353,6 +371,8 @@ def check_result(
         if label == "":
             print("dummy label")
         return None, 0
+    if not checker_urls:  # standalone run: no LLM judge / extractor servers
+        return _local_check(response, label)
     answer = extract_answer(question, response, extractor_urls)
     if not answer:
         return None, 0
@@ -784,13 +804,14 @@ def query_local_vllm_ids_with_logprobs(
     for try_counter in range(RETRY_COUNT):
         try:
             # try:
-            if use_ray:
+            if use_ray and hasattr(llm.generate, "remote"):
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             else:
-                outputs = llm.generate(
-                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                )
+                # standalone vllm.LLM (inference-only runs); vLLM>=0.10 dropped the prompt_token_ids= kwarg
+                from vllm.inputs import TokensPrompt
+                outputs = llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompt_token_ids],
+                                       sampling_params, use_tqdm=False)
             # except:
             #     # continue
             #     # print("ray.get error")

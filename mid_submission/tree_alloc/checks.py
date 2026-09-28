@@ -1,9 +1,10 @@
 """Task 1 smoke-test checks on a real-model log (run on the GPU box after `gen`):
 
-  python -m tree_alloc.checks --log logs/smoke.jsonl --model Qwen/Qwen2.5-Math-1.5B-Instruct
+  python -m tree_alloc.checks --log logs/smoke_b0.jsonl
 
-1. logprobs are raw pi_theta: re-score logged sequences with a transformers forward
-   pass and compare against log_softmax(logits) and log_softmax(logits / T).
+1. logprobs are raw pi_theta: re-score logged sequences with a transformers forward pass and
+   compare against log_softmax(logits) and the *processed* distribution vLLM samples from
+   (logits / T, then top-p renormalized). At T = 1.0 only the top-p part differs, so it is included.
 2. segmentation: segments per response, and a response printed with "‖" at each boundary.
 3. verifier: extracted answer vs gold for a sample, for eyeballing.
 """
@@ -16,7 +17,19 @@ from .run import read_jsonl
 from .tree import Tree
 
 
-def check_logprobs(trees, model_name, temperature, n_seqs, device="cuda"):
+def processed_logprobs(logits, temperature, top_p):
+    """log p of each token under softmax(logits / T) restricted to the top-p nucleus and renormalized."""
+    import torch
+
+    probs = torch.softmax(logits / temperature, -1)
+    sp, idx = probs.sort(-1, descending=True)
+    keep = sp.cumsum(-1) - sp < top_p  # smallest prefix whose mass reaches top_p
+    mask = torch.zeros_like(probs, dtype=torch.bool).scatter(-1, idx, keep)
+    p = torch.where(mask, probs, torch.zeros_like(probs))
+    return torch.log(p / p.sum(-1, keepdim=True))
+
+
+def check_logprobs(trees, model_name, temperature, top_p, n_seqs, device="cuda"):
     import torch
     from transformers import AutoModelForCausalLM
 
@@ -29,11 +42,12 @@ def check_logprobs(trees, model_name, temperature, n_seqs, device="cuda"):
             logits = model(x).logits[0, len(t.prompt_ids) - 1:-1].float()
         tgt = torch.tensor(ids, device=device)
         raw = torch.log_softmax(logits, -1).gather(1, tgt[:, None])[:, 0]
-        scaled = torch.log_softmax(logits / temperature, -1).gather(1, tgt[:, None])[:, 0]
+        proc = processed_logprobs(logits, temperature, top_p).gather(1, tgt[:, None])[:, 0]
         v = torch.tensor(lps, device=device)
-        rows.append(((v - raw).abs().mean().item(), (v - scaled).abs().mean().item(), len(ids)))
+        rows.append(((v - raw).abs().mean().item(), (v - proc).abs().mean().item(), len(ids)))
     print("\n## 1. Are logged logprobs raw pi_theta?")
-    print("| seq | tokens | mean |vllm - raw| | mean |vllm - logits/T| |\n|---|---|---|---|")
+    print(f"| seq | tokens | mean |vllm - raw| | mean |vllm - processed (T={temperature}, top-p={top_p})| |"
+          "\n|---|---|---|---|")
     for i, (a, b, n) in enumerate(rows):
         print(f"| {i} | {n} | {a:.4f} | {b:.4f} |")
     raw_wins = sum(a < b for a, b, _ in rows)
@@ -83,6 +97,7 @@ def main(argv=None):
     ap.add_argument("--log", required=True)
     ap.add_argument("--model", default="Qwen/Qwen2.5-Math-1.5B-Instruct")
     ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--n_logprob_seqs", type=int, default=4)
     ap.add_argument("--n_verify", type=int, default=30)
     a = ap.parse_args(argv)
@@ -92,7 +107,7 @@ def main(argv=None):
     tok = AutoTokenizer.from_pretrained(a.model)
     check_segments(trees, tok)
     check_verifier(trees, tok, a.n_verify)
-    check_logprobs(trees, a.model, a.temperature, a.n_logprob_seqs)
+    check_logprobs(trees, a.model, a.temperature, a.top_p, a.n_logprob_seqs)
 
 
 if __name__ == "__main__":

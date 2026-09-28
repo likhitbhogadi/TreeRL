@@ -1,5 +1,5 @@
 """Per-tree metrics computed offline from JSONL logs, plus small stats helpers
-(Spearman, paired bootstrap) so the analysis needs no scipy."""
+(paired bootstrap) so the analysis needs no scipy."""
 from __future__ import annotations
 
 import math
@@ -35,10 +35,9 @@ def tree_metrics(t: Tree) -> Dict:
             "acc": acc,
             "pass_any": float(max(rewards) > 0),
             "mixed": float(0 < acc < 1),
-            # branch points whose children disagree in value (= where delta != 0 is possible)
+            # branch points whose children disagree in value (sibling outcomes differ)
             "mixed_branch_frac": (sum(len({seg.value(c) for c in u.children}) > 1
                                       for u in seg.branch_points()) / max(len(seg.branch_points()), 1)),
-            "delta_zero_frac": (sum(seg.delta(v) == 0 for v in nonroot) / len(nonroot)) if nonroot else 1.0,
         })
     return m
 
@@ -46,30 +45,6 @@ def tree_metrics(t: Tree) -> Dict:
 def mean(xs: Sequence[float]) -> float:
     xs = [x for x in xs if x is not None and not (isinstance(x, float) and math.isnan(x))]
     return sum(xs) / len(xs) if xs else float("nan")
-
-
-def _ranks(xs: Sequence[float]) -> List[float]:
-    order = sorted(range(len(xs)), key=lambda i: xs[i])
-    ranks = [0.0] * len(xs)
-    i = 0
-    while i < len(order):
-        j = i
-        while j + 1 < len(order) and xs[order[j + 1]] == xs[order[i]]:
-            j += 1
-        for k in range(i, j + 1):
-            ranks[order[k]] = (i + j) / 2
-        i = j + 1
-    return ranks
-
-
-def spearman(xs: Sequence[float], ys: Sequence[float]) -> float:
-    if len(xs) < 3:
-        return float("nan")
-    rx, ry = _ranks(xs), _ranks(ys)
-    mx, my = mean(rx), mean(ry)
-    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
-    den = math.sqrt(sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry))
-    return num / den if den > 0 else float("nan")
 
 
 def paired_bootstrap(a: Dict[str, float], b: Dict[str, float], n: int = 2000, seed: int = 0,

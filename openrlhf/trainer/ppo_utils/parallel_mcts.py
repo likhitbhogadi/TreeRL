@@ -110,35 +110,38 @@ try:
     for key, value in ips.items():
         EXTRACTOR_URLS.extend([key for _ in range(value)])
 except:
-    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_config_llama3.1_max_request_1.json") as f:
-        api_checker_config = json.load(f)
+    try:
+        with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_config_llama3.1_max_request_1.json") as f:
+            api_checker_config = json.load(f)
 
-    EVALUATOR_URLS = []
-    ips = api_checker_config['ip']
-    for key, value in ips.items():
-        EVALUATOR_URLS.extend([key for _ in range(value)])
+        EVALUATOR_URLS = []
+        ips = api_checker_config['ip']
+        for key, value in ips.items():
+            EVALUATOR_URLS.extend([key for _ in range(value)])
 
-    # with open("./configs/api_config_rm_general.json") as f:
-    #     rm_api_config = json.load(f)
-    # with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
-    #     rm_api_config = json.load(f)
+        # with open("./configs/api_config_rm_general.json") as f:
+        #     rm_api_config = json.load(f)
+        # with open("/workspace/lurui/openrlhf-glm/openrlhf/trainer/ppo_utils/configs/api_qwen_rm.json") as f:
+        #     rm_api_config = json.load(f)
 
-    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_qwen72_v6_rm.json") as f:
-        rm_api_config = json.load(f)
+        with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_qwen72_v6_rm.json") as f:
+            rm_api_config = json.load(f)
 
-    RM_URLS = []
-    ips = rm_api_config['ip']
-    for key, value in ips.items():
-        RM_URLS.extend([key for _ in range(value)])
+        RM_URLS = []
+        ips = rm_api_config['ip']
+        for key, value in ips.items():
+            RM_URLS.extend([key for _ in range(value)])
         
         
-    with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_extractor.json") as f:
-        api_extractor_config = json.load(f)
+        with open("/workspace/lurui/openrlhf-glm/tools/api_configs/api_extractor.json") as f:
+            api_extractor_config = json.load(f)
 
-    EXTRACTOR_URLS = []
-    ips = api_extractor_config['ip']
-    for key, value in ips.items():
-        EXTRACTOR_URLS.extend([key for _ in range(value)])
+        EXTRACTOR_URLS = []
+        ips = api_extractor_config['ip']
+        for key, value in ips.items():
+            EXTRACTOR_URLS.extend([key for _ in range(value)])
+    except OSError:  # standalone runs: neither their repo-relative nor /workspace configs exist
+        EVALUATOR_URLS, RM_URLS, EXTRACTOR_URLS = [], [], []  # only used by the MCTS paths
 
 # import cProfile
 # import line_profiler

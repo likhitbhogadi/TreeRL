@@ -65,7 +65,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
 
-    b0 = load(os.path.join(a.logs, "b0_64.jsonl"))
+    b0 = load(sorted(glob.glob(os.path.join(a.logs, "b0_*.jsonl")))[-1])
     runs = {}
     for path in sorted(glob.glob(os.path.join(a.logs, "b[12]_*.jsonl"))):
         m = re.match(r"(b[12])_(\d+-\d+-\d+-\d+)\.jsonl", os.path.basename(path))

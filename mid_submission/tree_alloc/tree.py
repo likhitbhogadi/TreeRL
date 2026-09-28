@@ -3,8 +3,8 @@
 Layout follows TreeRL's TreeNode (openrlhf/trainer/ppo_utils/tree_node.py): every
 generation call is one `Node` that continues its parent's response prefix
 `parent.response[:parent.offset + fork_idx]`. The trajectory ending at a node is
-one leaf, so #leaves == #nodes. Unlike TreeRL, no token masking is baked in here;
-fork eligibility rules live in `methods.py`.
+one leaf, so #leaves == #nodes. This is the log format only: trees are built by TreeRL's
+code (run_treerl.py converts its TreeNode lists into this structure).
 
 Positions are always *response* positions (prompt excluded). "Forking at position
 p" means the new generation is conditioned on response[:p] and produces a new
@@ -138,15 +138,6 @@ class Tree:
             if n.boxed_at is not None and n.boxed_at < end:
                 return n.offset + n.boxed_at
         return None
-
-    def locate(self, node_id: int, pos: int) -> Tuple[Optional[int], int]:
-        """(parent, fork_idx) that forks the trajectory of `node_id` at response position `pos`."""
-        if pos == 0:
-            return None, 0
-        for n, end in reversed(self.path(node_id)):
-            if n.offset < pos <= n.offset + end:
-                return n.id, pos - n.offset
-        raise ValueError(f"position {pos} not on trajectory of node {node_id}")
 
     def prefix_ids(self, parent: Optional[int], fork_idx: int) -> List[int]:
         if parent is None:
