@@ -19,7 +19,7 @@ What was done, what it found, and every file added or changed. Full results are 
 | 4 | Made TreeRL's own code run standalone (small edits to 3 files) and cross-checked it against ours | Identical fork selection on 300/300 chains; statistically the same outcomes |
 | 5 | Switched to TreeRL's code for all tree building; deleted our sampler | `run_treerl.py` drives their manager; our code keeps only I/O, grading and analysis |
 | 6 | Re-ran Task 1 checks and the full Task 2 sweep with TreeRL's code (500 Omni-MATH problems, 11 configs) | Results below |
-| 7 | Clean-up | Removed Tasks 3–6 code and plan, superseded results, temporary files |
+| 7 | Clean-up | Removed Tasks 3–6 code and plan, superseded results, temporary files, and optional extras (smoke-test / check scripts, add-on analyses, unit tests) |
 
 Two problems hit along the way, both fixed:
 - **Grading hang.** TreeRL's grader runs in threads, where a symbolic checker can hang forever. It is now a string check; reported numbers are re-graded in the main thread.
@@ -31,14 +31,11 @@ Qwen2.5-Math-1.5B-Instruct, T = 1.0, top-p 0.95. i.i.d. PassRate: 44.4% at 16 ch
 
 | Paper claim | Our result |
 |---|---|
-| Trees beat i.i.d. sampling at the same token cost (Fig. 5) | **Replicated.** Positive in all 10 configs, significant in 5, about +3 points. Random forking gains as much as EPTree, so the gain comes from shared prefixes |
+| Trees beat i.i.d. sampling at the same token cost (Fig. 5) | **Replicated.** Every tree config sits above the i.i.d. curve, by up to about +3 points at matched tokens. Random forking gains as much as EPTree, so the gain comes from shared prefixes |
 | Entropy forking beats random forking (Table 2) | **No detectable difference:** +0.4, +0.8, 0.0, −0.8, and all CIs include 0. The paper's +2.1 / +1.0 are inside our CIs. EPTree does give slightly more distinct answers |
 | Fork positions roughly uniform (Fig. 8) | **Replicated** (mean relative position 0.50) |
 | Forking tokens (Fig. 7) | Similar: ` the`, ` \(`, ` and`, ` we`. No "Wait"/"But", which our model doesn't write |
 
-Add-on findings:
-- **Position matters more than surprisal.** After controlling for fork position, entropy forks change the outcome only slightly more often than random ones (7.0% vs 6.3%). Early forks change it 2–4× as often as late ones.
-- **The tree's value estimate at the root is unbiased** (within ±0.006 of pass@1).
 
 ## 3. Files added (all under `mid_submission/`)
 
@@ -46,15 +43,12 @@ Add-on findings:
 |---|---|
 | `run_treerl.py` | Runs TreeRL's tree builder per problem; converts, grades, saves; resumable; sharded |
 | `task2.sh` | Runs all 11 Task 2 configs in parallel shards (GPU-memory aware), merges, runs the reports |
-| `smoke.sh` | Task 1 check on 20 problems |
 | `tree_alloc/gen.py` | Loads the model in vLLM (raw logprobs, chat template) |
 | `tree_alloc/data.py`, `verify.py` | Problem loaders; `\boxed{}` grading |
 | `tree_alloc/tree.py` | Tree log format (JSON) |
-| `tree_alloc/checks.py` | Task 1 checks: logprobs are raw, segmentation, verifier |
 | `tree_alloc/run.py` | JSONL helpers, summary table |
-| `tree_alloc/segments.py`, `metrics.py` | Step-level view of a tree; per-tree metrics; paired bootstrap |
-| `tree_alloc/task2_report.py`, `task2_extra.py` | Figs 4/5/7/8, Table 2, extra analyses |
-| `tests/test_tree_alloc.py` | 11 unit tests (no GPU) |
+| `tree_alloc/metrics.py` | Per-tree metrics (summary table); paired bootstrap |
+| `tree_alloc/task2_report.py` | Figs 4/5/7/8, Table 2 |
 | `tier1_implementation.md`, `CODE_WALKTHROUGH.md`, `WORK_SUMMARY.md` | Write-up, code walkthrough, this page |
 | `results/task2/` | Task 2 results: tables and figures |
 | `requirements.txt`, `.gitignore` | GPU-machine dependencies; ignores `logs/` |
@@ -90,8 +84,6 @@ SSH: your laptop's key is installed on pkgpu2, so `ssh likhit@10.4.25.54` works 
 
 ```bash
 cd ~/likhit/tree_based_rl/TreeRL/mid_submission_likhit && source ~/likhit/.venv/bin/activate
-python -m unittest discover -s tests                        # 11 tests, no GPU
-./smoke.sh                                                  # Task 1 checks
 nohup ./task2.sh > /tmp/task2.log 2>&1 &                    # Task 2 (resumable; GPUS=0 SLOTS=3 to limit)
 python -m tree_alloc.run logs/task2/*.jsonl                 # summary table
 ```

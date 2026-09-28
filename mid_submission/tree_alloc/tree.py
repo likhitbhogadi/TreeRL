@@ -124,21 +124,6 @@ class Tree:
             lps += n.logprobs[:end]
         return ids, lps
 
-    def boundaries(self, node_id: int) -> List[int]:
-        """Sorted segment end positions of the trajectory, always including its length."""
-        out = set()
-        for n, end in self.path(node_id):
-            out.update(n.offset + e for e in n.seg_ends if e <= end)
-        out.add(self.nodes[node_id].end)
-        out.discard(0)
-        return sorted(out)
-
-    def boxed_pos(self, node_id: int) -> Optional[int]:
-        for n, end in self.path(node_id):
-            if n.boxed_at is not None and n.boxed_at < end:
-                return n.offset + n.boxed_at
-        return None
-
     def prefix_ids(self, parent: Optional[int], fork_idx: int) -> List[int]:
         if parent is None:
             return []

@@ -6,21 +6,16 @@ import math
 import random
 from typing import Callable, Dict, List, Sequence
 
-from .segments import SegTree
 from .tree import Tree
 
 
 def tree_metrics(t: Tree) -> Dict:
     rewards = [n.reward for n in t.nodes]
     scored = all(r is not None for r in rewards)
-    seg = SegTree(t)
-    nonroot = [v for v in seg.nodes if not v.is_root]
     m = {
         "problem_id": t.problem_id,
         "n_leaves": len(t.nodes),
         "new_tokens": t.new_tokens,
-        "n_seg_nodes": len(nonroot),
-        "n_branch_points": len(seg.branch_points()),
         "truncated_frac": sum(n.finish_reason == "length" for n in t.nodes) / len(t.nodes),
         "distinct_answers": len({n.answer for n in t.nodes if n.answer is not None}),
         # Fig. 8: relative position of each fork within the parent trajectory
@@ -35,9 +30,6 @@ def tree_metrics(t: Tree) -> Dict:
             "acc": acc,
             "pass_any": float(max(rewards) > 0),
             "mixed": float(0 < acc < 1),
-            # branch points whose children disagree in value (sibling outcomes differ)
-            "mixed_branch_frac": (sum(len({seg.value(c) for c in u.children}) > 1
-                                      for u in seg.branch_points()) / max(len(seg.branch_points()), 1)),
         })
     return m
 

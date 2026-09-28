@@ -66,10 +66,10 @@ Leaves = M + L·M·N·T. For (6,2,1,2) that's 6 + 1·6·2·2 = **30 answers**.
                          └──────────────────────────────────────────────────────────────────────┘
                                          │  logs/task2/<config>.jsonl  (one tree per line)
                                          ▼
-        task2_report.py ──► Figs 4/5/7/8 + Table 2        task2_extra.py ──► extra analyses
+                  task2_report.py ──► Figs 4/5/7/8 + Table 2
 ```
 
-`task2.sh` runs this for all 11 configs, in parallel across GPU processes, and then runs both reports.
+`task2.sh` runs this for all 11 configs, in parallel across GPU processes, and then runs the report.
 
 ---
 
@@ -162,13 +162,6 @@ A cut-off answer (`finish_reason == "length"`) scores 0. This runs in the main t
 - **Resuming:** on start, `run_treerl.py` reads that file and skips problems already done. A stopped run continues where it left off.
 - **Parallel shards:** with `--shard i --num_shards K`, a process only takes every K-th problem and writes to `<config>.jsonl.shard<i>`. That lets several copies of TreeRL's one-problem-at-a-time code run side by side.
 
-### Step 7: Check the setup — [smoke.sh](smoke.sh) and [tree_alloc/checks.py](tree_alloc/checks.py)
-
-`smoke.sh` builds trees for 20 easy problems, then `checks.py` verifies three things:
-1. **The logprobs really are raw** ([`check_logprobs`](tree_alloc/checks.py)): re-score some answers with a plain `transformers` forward pass. The saved logprobs should match the raw probabilities better than the reshaped ones (after temperature and top-p).
-2. **"\n\n" step boundaries look right** ([`check_segments`](tree_alloc/checks.py)): prints an answer with ‖ at each boundary.
-3. **Grading looks right** ([`check_verifier`](tree_alloc/checks.py)): prints extracted vs gold answers, for checking by eye.
-
 ---
 
 ## 3. Task 2: the experiment and its analysis, step by step
@@ -184,7 +177,7 @@ It then does four things:
 1. **Makes a to-do list** (`fill_queue`): every (config, shard) pair that isn't finished yet. Each config is split into K = 8 shards of about 63 problems.
 2. **Starts workers** (`worker`): SLOTS processes per GPU, each taking the next item from the list. Before starting, a worker checks the GPU has enough **free memory** (`fits`), because the machine is shared with other users. If a job fails, it goes back on the list once, and the worker pauses first.
 3. **Runs a second pass** for anything that failed or was cut short.
-4. **Merges** the 8 shard files into `<config>.jsonl`, but only if all 500 problems are there. Then it runs both reports.
+4. **Merges** the 8 shard files into `<config>.jsonl`, but only if all 500 problems are there. Then it runs the report.
 
 ### Step 2: The main report — [tree_alloc/task2_report.py](tree_alloc/task2_report.py)
 
@@ -214,27 +207,9 @@ It then does four things:
 
 ([`place_labels`](tree_alloc/task2_report.py) just keeps figure labels from overlapping.)
 
-### Step 3: The extra analyses — [tree_alloc/task2_extra.py](tree_alloc/task2_extra.py)
+### Step 3: A quick table for any log — [tree_alloc/run.py](tree_alloc/run.py) and [tree_alloc/metrics.py](tree_alloc/metrics.py)
 
-**A. Trees vs. i.i.d., per problem, at the same cost.** For each problem, work out how many i.i.d. answers that problem's tree budget would buy (tree tokens ÷ that problem's average answer length). Then compare the tree's result with pass@k at that k ([`iid_pass_interp`](tree_alloc/task2_extra.py) handles fractional k), with a paired bootstrap. This is fairer than comparing averages.
-
-**B. Sibling disagreement: does a fork change the outcome?**
-- For each fork, compare its result with the original answer it branched from. If one is right and the other wrong, that fork point "mattered".
-- EPTree's claim is that high-surprisal points matter more than random ones.
-- **Catch:** early forks naturally change more, because more of the answer is rewritten. So the code also **re-weights** random forks to have the same position mix as EPTree's before comparing.
-
-**C. Continuation length.** Is a new branch about as long as the part of the original it replaced? (It is.)
-
-**D. Estimating "how good is this problem for the model"** (the true pass@1) from a tree, three ways:
-- **leaf mean:** average over all leaves;
-- **child mean** ([`child_mean`](tree_alloc/task2_extra.py)): each branch weighted equally, working up the tree;
-- **roots only:** average over the first M answers, which is unbiased by design.
-
-They're compared against the 64-answer i.i.d. estimate. This uses [`SegTree`](tree_alloc/segments.py): the tree regrouped into "\n\n" reasoning steps, where each step node knows which leaves pass through it ([`value`](tree_alloc/segments.py) = their average correctness).
-
-### Step 4: A quick table for any log — [tree_alloc/run.py](tree_alloc/run.py) and [tree_alloc/metrics.py](tree_alloc/metrics.py)
-
-`python -m tree_alloc.run logs/task2/*.jsonl` prints one row per config, using [`tree_metrics`](tree_alloc/metrics.py): leaves, tokens, accuracy, PassRate, distinct answers, branch points, and average fork position.
+`python -m tree_alloc.run logs/task2/*.jsonl` prints one row per config, using [`tree_metrics`](tree_alloc/metrics.py): leaves, tokens, accuracy, PassRate, distinct answers, truncated answers, and average fork position.
 
 ---
 
@@ -244,18 +219,13 @@ They're compared against the 64-answer i.i.d. estimate. This uses [`SegTree`](tr
 |---|---|---|
 | [run_treerl.py](run_treerl.py) | 1–2 | Runs TreeRL's tree builder per problem, converts, grades, saves |
 | [task2.sh](task2.sh) | 2 | Runs all 11 configs in parallel shards, merges, reports |
-| [smoke.sh](smoke.sh) | 1 | 20-problem end-to-end check |
 | [tree_alloc/data.py](tree_alloc/data.py) | 1 | Load problems from any of the datasets |
 | [tree_alloc/gen.py](tree_alloc/gen.py) | 1 | Load the model in vLLM (raw logprobs, chat template) |
 | [tree_alloc/tree.py](tree_alloc/tree.py) | 1 | Our tree format: nodes, prefixes, boundaries, JSON |
 | [tree_alloc/verify.py](tree_alloc/verify.py) | 1 | Extract `\boxed{}` answers and grade them |
-| [tree_alloc/checks.py](tree_alloc/checks.py) | 1 | Logprob / segmentation / verifier checks |
 | [tree_alloc/run.py](tree_alloc/run.py) | 1–2 | Read/write JSONL, summary table |
-| [tree_alloc/segments.py](tree_alloc/segments.py) | 2 | Regroup a tree by "\n\n" steps; step values |
 | [tree_alloc/metrics.py](tree_alloc/metrics.py) | 2 | Per-tree metrics, paired bootstrap |
 | [tree_alloc/task2_report.py](tree_alloc/task2_report.py) | 2 | pass@k, Table 2, Figs 4/5/7/8 |
-| [tree_alloc/task2_extra.py](tree_alloc/task2_extra.py) | 2 | Matched-cost comparison, disagreement, lengths, estimator bias |
-| [tests/test_tree_alloc.py](tests/test_tree_alloc.py) | – | 11 unit tests (no GPU needed) |
 | TreeRL: [entropy_chain_local_manager.py](../openrlhf/trainer/ppo_utils/entropy_chain_local_manager.py) | 1–2 | Builds the tree (steps 3a–3e) |
 | TreeRL: [tree_node.py](../openrlhf/trainer/ppo_utils/tree_node.py) | 1–2 | `TreeNode`, fork masking, top-surprisal picking |
 | TreeRL: [evaluation.py](../openrlhf/trainer/ppo_utils/evaluation.py) | 1–2 | vLLM calls and grading (our edits make them run without Ray or judge servers) |
@@ -270,11 +240,12 @@ They're compared against the 64-answer i.i.d. estimate. This uses [`SegTree`](tr
 
 **Why shards?** TreeRL's code handles one problem at a time, which leaves the GPU mostly idle. Running 3–4 copies per GPU on different problems keeps it busy.
 
-**Why save everything to JSONL instead of just the final numbers?** Every analysis (figures, tables, extra checks) is computed afterwards from the saved trees. A new question never needs a new GPU run.
+**Why save everything to JSONL instead of just the final numbers?** Every analysis (figures, tables) is computed afterwards from the saved trees. A new question never needs a new GPU run.
 
 **What should I run to see it working?**
 ```bash
-python3 -m unittest discover -s tests         # on a laptop, no GPU
-./smoke.sh                                    # on pkgpu2, a few minutes
-python -m tree_alloc.run logs/task2/*.jsonl   # summary of finished runs
+python run_treerl.py --method b2 --M 2 --N 1 --L 1 --T 1 \
+    --data ../datasets/eval/MATH500.jsonl --limit 5 --out logs/try.jsonl   # 5 small trees, on pkgpu2
+python -m tree_alloc.run logs/try.jsonl                                  # summary table
+python -m tree_alloc.run logs/task2/*.jsonl                              # summary of the Task 2 runs
 ```

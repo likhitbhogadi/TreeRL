@@ -88,5 +88,4 @@ echo "$CONFIGS" | while IFS='|' read name args; do  # merge complete configs
 done
 
 python -m tree_alloc.task2_report --logs $O --out results/task2
-CUDA_VISIBLE_DEVICES= python -m tree_alloc.task2_extra --logs $O --out results/task2
 echo TASK2_DONE

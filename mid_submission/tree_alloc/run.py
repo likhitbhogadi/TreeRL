@@ -28,8 +28,7 @@ def append_jsonl(path: str, rows: Iterable[Dict]) -> None:
 
 
 def summary(paths: List[str]) -> None:
-    cols = ["n_leaves", "new_tokens", "acc", "pass_any", "mixed", "distinct_answers",
-            "n_branch_points", "mixed_branch_frac", "truncated_frac"]
+    cols = ["n_leaves", "new_tokens", "acc", "pass_any", "mixed", "distinct_answers", "truncated_frac"]
     print("| log | problems | " + " | ".join(cols) + " | fork_rel_pos |")
     print("|" + "---|" * (len(cols) + 3))
     for path in paths:

@@ -52,14 +52,11 @@ Also needed:
 |---|---|
 | [`run_treerl.py`](run_treerl.py) | Runs TreeRL's manager per problem, converts its trees to our format (`to_tree`), re-grades every leaf (`score`), appends one JSON line per tree. Resumes by problem ID; `--shard i --num_shards K` splits problems across parallel processes |
 | [`task2.sh`](task2.sh) | All 11 Task 2 configs: 8 shards each, run by several processes per GPU. It waits for free GPU memory, retries a failed shard once, merges, then runs the reports |
-| [`smoke.sh`](smoke.sh) | Task 1 check on 20 MATH500 problems |
 | `tree_alloc/gen.py` | Loads the model in vLLM: raw logprobs, chat-template prompts as token IDs |
 | `tree_alloc/data.py`, `verify.py` | Problem loaders; `\boxed{}` extraction and grading (`math_verify`, with a string fallback) |
 | `tree_alloc/tree.py` | Tree log format (layout follows TreeRL's `TreeNode`): nodes, prefixes, "\n\n" step boundaries, JSON |
-| `tree_alloc/checks.py` | Task 1 checks: logprobs are raw, segmentation, verifier |
 | `tree_alloc/task2_report.py` | Unbiased pass@k curve for i.i.d. sampling, Table 2, Figs 4/5/7/8 |
-| `tree_alloc/task2_extra.py`, `segments.py`, `metrics.py` | Matched-cost comparison, sibling disagreement, continuation length, value-estimate bias; paired bootstrap |
-| `tests/test_tree_alloc.py` | 11 unit tests (no GPU), including the TreeRL-tree conversion |
+| `tree_alloc/metrics.py` | Per-tree metrics (summary table) and the paired bootstrap used for Table 2 |
 
 **Deviations from the paper's setup:**
 - Temperature is 1.0, not 1.2 (§3).
@@ -77,13 +74,11 @@ Also needed:
 
 ```bash
 cd ~/likhit/tree_based_rl/TreeRL/mid_submission_likhit && source ~/likhit/.venv/bin/activate
-python -m unittest discover -s tests                     # 11 tests, no GPU
-./smoke.sh                                               # Task 1 checks (20 MATH500 problems)
 nohup ./task2.sh > /tmp/task2.log 2>&1 &                 # Task 2 (resumable; GPUS=0 SLOTS=3 to limit)
 python -m tree_alloc.run logs/task2/*.jsonl              # summary table
 ```
 
-**Task 1 smoke test, TreeRL-code path** (20 MATH500 problems). All checks pass:
+**Task 1 smoke test, TreeRL-code path** (20 MATH500 problems). All checks pass. They were run with a smoke-test script, removed after validation; its logs remain on pkgpu2 as `logs/smoke_*.jsonl`.
 
 | Check | Result |
 |---|---|
@@ -109,7 +104,7 @@ python -m tree_alloc.run logs/task2/*.jsonl              # summary table
 - Some Omni-MATH answers are free text, which a rule-based checker can't match (the paper used an LLM judge). That lowers absolute PassRate equally for every method.
 - An earlier run on 243 accuracy-filtered OlympiadBench problems saturated (95% PassRate at 16 chains) and was dropped.
 
-Full tables: [results/task2/results.md](results/task2/results.md) and [results/task2/extra.md](results/task2/extra.md). Figures: [Fig. 5](results/task2/fig5_passrate_vs_tokens.png), [Fig. 4](results/task2/fig4_responses_diversity_vs_tokens.png), [Fig. 7](results/task2/fig7_top_fork_tokens.png), [Fig. 8](results/task2/fig8_fork_position.png). Raw logs are on pkgpu2 in `logs/task2/` (1.4 GB).
+Full tables: [results/task2/results.md](results/task2/results.md). Figures: [Fig. 5](results/task2/fig5_passrate_vs_tokens.png), [Fig. 4](results/task2/fig4_responses_diversity_vs_tokens.png), [Fig. 7](results/task2/fig7_top_fork_tokens.png), [Fig. 8](results/task2/fig8_fork_position.png). Raw logs are on pkgpu2 in `logs/task2/` (1.4 GB).
 
 **i.i.d. PassRate:** 25.9% at 1 chain, 40.0% at 8, **44.4% at 16**, 53.2% at 64 (paper, 14B model: 52.4% at 16, 67.4% at 64). 234 of the 500 problems are never solved in 64 samples.
 
@@ -122,34 +117,27 @@ Full tables: [results/task2/results.md](results/task2/results.md) and [results/t
 | (6,2,1,2) | 30 | 48.8% | 48.8% | 0.0 [−2.4, +2.4] | 8.41 / 8.07 | 14.5k / 14.2k | +2.1 (56.9 vs 54.8) |
 | (8,4,2,2) | 136 | 56.4% | 57.2% | −0.8 [−3.2, +1.6] | 21.07 / 19.92 | 52.4k / 51.9k | +1.0 (71.0 vs 70.0) |
 
-**Trees vs. i.i.d. at the same token cost (Fig. 5).** Paired per problem; the i.i.d. cost of k chains on a problem is k × that problem's mean chain length.
+**Trees vs. i.i.d. at the same token cost (Fig. 5).** Tree PassRate vs. the i.i.d. pass@k curve interpolated to the same tokens per problem (from `results.md`; no CIs):
 
-| Config | EPTree | Random |
-|---|---|---|
-| (2,1,1,1), 4 leaves | +0.8 [−1.1, +2.8] | – |
-| (2,3,1,1), 8 leaves | **+3.2 [+1.0, +5.4]** | – |
-| (4,1,1,1), 8 leaves | +1.6 [−0.4, +3.7] | +1.2 [−0.8, +3.4] |
-| (4,3,1,1), 16 leaves | +1.2 [−0.8, +3.4] | +0.5 [−1.4, +2.5] |
-| (6,2,1,2), 30 leaves | **+3.4 [+1.3, +5.5]** | **+3.3 [+1.2, +5.7]** |
-| (8,4,2,2), 136 leaves | **+3.6 [+1.2, +5.9]*** | **+4.1 [+1.4, +6.9]*** |
+| Config | Tokens | EPTree | Random | i.i.d. at same tokens |
+|---|---|---|---|---|
+| (2,1,1,1), 4 leaves | 2.3k | 34.6% | – | 34.0% |
+| (2,3,1,1), 8 leaves | 3.9k | 40.2% | – | 37.4% |
+| (4,1,1,1), 8 leaves | 4.6k | 39.8% | 39.4% | 38.4% |
+| (4,3,1,1), 16 leaves | 7.9–8.0k | 43.0% | 42.2% | 41.8–41.9% |
+| (6,2,1,2), 30 leaves | 14.2–14.5k | 48.8% | 48.8% | 45.5–45.6% |
+| (8,4,2,2), 136 leaves | 51.9–52.4k | 56.4% | 57.2% | 53.2% at 64 chains (47.3k tokens)* |
 
-\* (8,4,2,2) costs as much as about 70–72 i.i.d. chains, but only 64 were sampled, so these Δs are against pass@64 and slightly overstated.
+\* (8,4,2,2) costs more than the 64 i.i.d. chains sampled, so it can only be compared with pass@64, which used about 10% fewer tokens.
 
 **Findings:**
-1. **Trees beat i.i.d. sampling at the same token cost (Fig. 5 replicated).** Δ is positive in all 10 configs (+0.5 to +4.1), and significant in 5. Random forking gains as much as EPTree, e.g. +3.3 vs +3.4 at (6,2,1,2), so the gain comes from **sharing prefixes**, not from where the forks are. At the same number of *leaves*, trees are equal or slightly worse (−2.2 to +0.5), because answers that share a prefix are correlated.
+1. **Trees beat i.i.d. sampling at the same token cost (Fig. 5 replicated).** Every tree config sits above the i.i.d. curve, by +0.4 to +3.3 points at matched tokens. (8,4,2,2) beats pass@64 by +3.2 / +4.0 with about 10% more tokens. Random forking gains as much as EPTree (+3.3 vs +3.2 at (6,2,1,2)), so the gain comes from **sharing prefixes**, not from where the forks are.
 2. **Entropy vs. random forking (Table 2): no detectable difference.** Δ = +0.4, +0.8, 0.0, −0.8, and every CI includes 0. The paper's gaps (+2.1, +1.0) lie inside our CIs, so the data allow a small entropy advantage but give no evidence for one. The only consistent difference: EPTree yields slightly **more distinct answers** in all 4 configs (+0.02 to +1.15), i.e. it explores a little more widely.
-3. **Consequentiality** (does a fork's outcome differ from the original it branched off?):
-   - EPTree forks disagree 6.8–7.8% of the time, random forks 5.9–7.0%; two independent chains disagree 10.0%.
-   - The per-problem gap is +0.8 to +0.9 points, significant in 3 of 4 configs.
-   - After re-weighting random forks to EPTree's position mix: 7.0% vs. 6.3%, so high-surprisal points matter only slightly more.
-   - Position matters more: forks in the first fifth of an answer change the outcome 2–4× as often as forks in the last fifth (EPTree 10.0% → 4.3%; random 9.4% → 2.4%).
-4. **Continuation length:** a new branch is about as long as the part it replaces (median ratio 1.00–1.02), and at most 0.4% of new branches are truncated.
-5. **Bias in the value estimate at the root:** negligible. The leaf mean, child mean and roots-only estimates are all within ±0.006 of the true pass@1 of 0.259.
-6. **Fig. 8:** EPTree's fork positions are roughly uniform over the answer (mean 0.50), matching the paper, with a rise near the end because TreeRL has no end-of-response mask. Random forks lean later (mean 0.54), since later branches add more candidate positions.
-7. **Fig. 7:** ` the`, ` \(`, ` \`, `,`, ` and`, ` a`, ` we`. This matches the paper, minus "Wait"/"But", which this model doesn't write. The mean surprisal at an EPTree fork is 4.95 nats (probability ≈ 0.7%).
-8. **Only 17–48% of trees contain both correct and wrong answers** on this unfiltered set: 234 of the 500 problems are never solved in 64 i.i.d. samples, and 41 are always solved.
+3. **Fig. 8:** EPTree's fork positions are roughly uniform over the answer (mean 0.50), matching the paper, with a rise near the end because TreeRL has no end-of-response mask. Random forks lean later (mean 0.54), since later branches add more candidate positions.
+4. **Fig. 7:** ` the`, ` \(`, ` \`, `,`, ` and`, ` a`, ` we`. This matches the paper, minus "Wait"/"But", which this model doesn't write. The mean surprisal at an EPTree fork is 4.95 nats (probability ≈ 0.7%).
+5. **Only 17–48% of trees contain both correct and wrong answers** on this unfiltered set: 234 of the 500 problems are never solved in 64 i.i.d. samples, and 41 are always solved.
 
-**Bottom line:** with TreeRL's own code and a 1.5B model, **tree sampling beats i.i.d. sampling at matched cost** (about +3 points), and fork positions are roughly uniform, as in the paper. **Entropy-guided forking does not measurably beat random forking** at 500 problems and one seed. Resolving a 1–2-point effect would need more seeds or problems.
+**Bottom line:** with TreeRL's own code and a 1.5B model, **tree sampling beats i.i.d. sampling at matched cost** (up to about +3 points), and fork positions are roughly uniform, as in the paper. **Entropy-guided forking does not measurably beat random forking** at 500 problems and one seed. Resolving a 1–2-point effect would need more seeds or problems.
 
 ## 5. Status
 
