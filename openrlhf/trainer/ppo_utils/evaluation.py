@@ -771,7 +771,6 @@ def query_local_vllm_completions_with_logprobs(
             time.sleep(sleep_time)
     return None, None, None, None, None
 
-
 def query_local_vllm_ids_with_logprobs(
     prompt_token_ids,
     llm,
@@ -821,7 +820,13 @@ def query_local_vllm_ids_with_logprobs(
             #         )
             #     else:
             #         continue
+            #
 
+            #text	str	The generated text (the continuation only, not the prompt)	yes, content_strs
+            #token_ids	list[int]	The generated token IDs	only for len(...) → token_nums
+            #cumulative_logprob	float	Sum of the logprobs of all generated tokens	no
+            #logprobs	list[dict[int, Logprob]]	One dict per generated token (only filled in when logprobs is set)	yes, this is where the fork scores come from
+            #finish_reason	str	"stop" (hit a stop token) or "length" (hit max_tokens)	yes
             for output in outputs:
                 assert len(output.outputs) == 1
                 out = output.outputs[0]
