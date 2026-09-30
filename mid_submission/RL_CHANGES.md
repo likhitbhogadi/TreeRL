@@ -7,7 +7,7 @@ We reuse TreeRL's released RL code (`train_reinforce_ray.py` + `openrlhf/`, a fo
 
 The algorithm itself is untouched: `tree_node.py`, `parallel_mcts.gather_paths`, `entropy_chain_local_manager.py` (apart from the Task 2 `random_fork` flag), `models/loss.py` and `replay_buffer.py` are unchanged. Every edit has a comment at the changed line, and `git diff` shows the full diff.
 
-Status: runs end to end. It was checked on Qwen2.5-0.5B-Instruct, with 3 training steps across two smoke runs, checkpoint save and reload, and the weight-sync check below. The 1.5B run is waiting for GPU memory; see [VRAM](#vram-does-15b-fit-in-40-gb).
+Status: runs end to end. The first 1.5B run (TreeRL, 40 steps at the reduced budget) completed in 67 min with a measured peak of 18.4 GB of GPU memory; see [VRAM](#vram-does-15b-fit-in-40-gb) and [Time](#time). ChainRL and the checkpoint evaluations are queued in `scripts/run_baselines.sh`.
 
 ## How to run
 
@@ -155,7 +155,9 @@ Not fixed (harmless for us): `entropy_guided_tree_search.parallel_entropy_guided
 
 ## VRAM: does 1.5B fit in 40 GB?
 
-**Yes.** Qwen2.5-Math-1.5B has 1.54B parameters.
+**Yes, measured: 18.4 GB peak** for the TreeRL run (Qwen2.5-Math-1.5B-Instruct, `VLLM_MEM=0.3`, 2,048-token responses, CPU Adam). This is the sum over our processes, sampled every minute in `ckpt/qwen1.5b-treerl-6-2-1-2.gpu_mem.log`, so short spikes between samples are not captured.
+
+The estimate below (made before the run) is an upper bound. Qwen2.5-Math-1.5B has 1.54B parameters.
 
 | | GPU memory |
 |---|---|
@@ -177,13 +179,11 @@ The smoke tests had to fit into the ~11 GB other users left free, which is why t
 
 ## Time
 
-Measured on 0.5B, on a GPU another job was using at 100%:
-- A rollout of 4 trees took 1–2 min.
-- Training took 1.5 s per sample.
+**Measured, 1.5B TreeRL at the reduced budget** (8 prompts × 8 of 30 leaves = 64 samples per step, 2,048-token responses), on a GPU shared with other jobs:
+- **40 steps in 67 min: 1.7 min per step.**
+- Rollout (building 8 trees) took 32–84 s per step; the rest is the logprob pass and training.
 
-Estimate for 1.5B, 16 prompts × 16 leaves = 256 samples per step:
-- **Per step:** rollout ~2–4 min plus training ~4–6 min, so **~8–10 min on a free GPU**, and more when shared.
-- **100 steps** (1,600 problems): **~14–17 h**.
+Scaling from that, the full paper-sized step (16 prompts × 16 leaves = 256 samples) should take ~5–7 min, so 100 steps ≈ 9–12 h. The pre-run estimate was ~8–10 min per step; the measured run is faster.
 
 The paper's schedule (2 epochs over 30k problems) is out of reach on one GPU, so runs use a fixed `STEPS` budget. Everything we compare should use the same budget.
 
@@ -191,6 +191,6 @@ The paper's schedule (2 epochs over 30k problems) is out of reach on one GPU, so
 
 - **No evaluation during training** (the released code has a TODO there). Score saved checkpoints afterwards with `solve_rate.py` (see [Baselines](#baselines-data-chainrl-evaluation)).
 - **Single GPU only.** Multi-GPU would need the NCCL weight sync ported to vLLM V1.
-- **Not run yet at 1.5B:** TreeRL and ChainRL training (waiting for a GPU with ~30 GB free).
+- **Queued:** ChainRL training and all checkpoint evaluations (`scripts/run_baselines.sh`, waiting for GPU memory).
 - **Metric naming:** `response_overlong_ratio` in the log is really the share of responses that ended properly (the code's `overlong_mask` is 1 for a finished response).
 - **Our method:** Phase I / Phase II allocation plugs in where EPTree picks fork points (`entropy_chain_local_manager.py`). Everything downstream of the tree (advantages, loss, training) is reused as is.

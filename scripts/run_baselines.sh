@@ -1,13 +1,13 @@
 #!/bin/bash
 # Unattended baselines on the shared GPU box, at the reduced budget of mid_submission/RL_CHANGES.md:
-#   1. base-model eval   2. TreeRL (6,2,1,2)   3. ChainRL (8 chains)   4. eval of every saved checkpoint
+#   1. base-model eval   2. TreeRL (6,2,1,2) + eval of its checkpoints   3. ChainRL (8 chains) + eval of its checkpoints
 # Each stage waits for a GPU with enough free memory. Finished stages are skipped, so re-running continues
 # where it stopped. An RL run that dies (e.g. OOM because another user's job grew) or makes no progress for
 # 45 min waits for memory again and resumes from its newest checkpoint (3 tries).
 #   nohup scripts/run_baselines.sh > /tmp/likhit_baselines.log 2>&1 &
 cd "$(dirname "$0")/.." && ROOT=$(pwd)
 source ~/likhit/.venv/bin/activate
-NEED_RL=${NEED_RL:-26000}      # MiB free to start RL: vLLM 0.3 x 46 GB + actor 6 GB + CUDA contexts, + margin
+NEED_RL=${NEED_RL:-21000}      # MiB free to start RL: measured peak 18.4 GB (1.5B, VLLM_MEM=0.3) + margin
 NEED_EVAL=${NEED_EVAL:-14000}  # vLLM at 0.28 x 46 GB
 COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=${STEPS:-40} SAVE_STEPS=10 VLLM_MEM=0.3"
 DATA=$ROOT/mid_submission/data/train_30k_mixed.jsonl
@@ -37,6 +37,7 @@ evaluate() {  # evaluate <model path or id> <name>: greedy accuracy on the eval 
           --gpu_mem 0.28 --summary $DONE/eval_$2.csv --data $EVAL_SETS > $DONE/eval_$2.log 2>&1); then
       tail -n +$([ -f mid_submission/results/rl_eval.csv ] && echo 2 || echo 1) $DONE/eval_$2.csv >> mid_submission/results/rl_eval.csv
       touch $DONE/eval_$2
+      sleep 60  # let vLLM free its memory: a new engine's startup profiling fails if free memory changes
       return
     fi
     echo "$(date +%T) eval $2 failed (see $DONE/eval_$2.log)"; rm -f $DONE/eval_$2.csv; sleep 300
@@ -71,10 +72,10 @@ train() {  # train <tag> <"M N L T">
 [ -s $DATA ] || { echo "missing $DATA (run mid_submission/solve_rate.py --keep_mixed first)"; exit 1; }
 evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base
 # tags contain "qwen": the released code picks the model family from the checkpoint path
-train qwen1.5b-treerl-6-2-1-2 "6 2 1 2"
-train qwen1.5b-chainrl-8 "8 0 0 0"
-for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8; do
-  for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do
+for run in "qwen1.5b-treerl-6-2-1-2|6 2 1 2" "qwen1.5b-chainrl-8|8 0 0 0"; do
+  tag=${run%%|*}
+  train $tag "${run#*|}"
+  for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do  # right after training
     evaluate $c ${tag}_$(basename $c)
   done
 done
