@@ -1,7 +1,7 @@
 #!/bin/bash
 # Unattended baselines on the shared GPU box, at the reduced budget of mid_submission/RL_CHANGES.md:
 #   1. base-model eval   2-4. TreeRL (6,2,1,2), ChainRL (8 chains), GRPO (8 chains), each + eval of its checkpoints
-#   5. 8-sample eval of steps 20/40   6. a longer TreeRL run (150 steps, lr 5e-6) + its eval
+#   5. 8-sample eval of steps 20/40   6-8. longer TreeRL, ChainRL, GRPO runs (150 steps, lr 5e-6) + their eval
 # Each stage waits for a GPU with enough free memory. Finished stages are skipped, so re-running continues
 # where it stopped. An RL run that dies (e.g. OOM because another user's job grew) or makes no progress for
 # 45 min waits for memory again and resumes from its newest checkpoint (3 tries).
@@ -89,10 +89,14 @@ for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8 qwen1.5b-grpo-8; do
   for step in 20 40; do evaluate $ROOT/ckpt/$tag/_actor_global_step$step ${tag}_step${step}_n8 $SAMPLED; done
 done
 
-# Longer TreeRL with a larger step: 40 steps at lr 1.5e-6 did not move greedy accuracy
-tag=qwen1.5b-treerl-6-2-1-2-lr5e-6-150
-train $tag "6 2 1 2" STEPS=150 LR=5e-6 SAVE_STEPS=50
-for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do
-  evaluate $c ${tag}_$(basename $c)_n8 $SAMPLED
+# Longer runs with a larger step, identical settings for all three methods (40 steps at lr 1.5e-6 did not
+# move greedy accuracy); each run is scored right after it finishes
+for run in "qwen1.5b-treerl-6-2-1-2-lr5e-6-150|6 2 1 2|" "qwen1.5b-chainrl-8-lr5e-6-150|8 0 0 0|" \
+           "qwen1.5b-grpo-8-lr5e-6-150|8 0 0 0|ADV=grpo"; do
+  IFS='|' read tag tree extra <<< "$run"
+  train $tag "$tree" STEPS=150 LR=5e-6 SAVE_STEPS=50 $extra
+  for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do
+    evaluate $c ${tag}_$(basename $c)_n8 $SAMPLED
+  done
 done
 echo "$(date +%T) BASELINES_DONE"
