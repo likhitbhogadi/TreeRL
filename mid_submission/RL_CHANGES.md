@@ -36,7 +36,14 @@ python solve_rate.py --data ../datasets/train/train_30k.jsonl --sample 3000 --n 
     --keep_mixed data/train_30k_mixed.jsonl --out data/train_30k_solve_rate_n8.jsonl
 ```
 
-The output keeps `train_30k`'s format (`text`, `label`, `data_type`, plus `solve_rate`), so it goes straight into `DATA=`. We use `train_30k` (the paper's training set) instead of MATH train: Qwen2.5-Math-1.5B-Instruct saturates MATH-level problems (most trees all right), and it was itself trained on MATH train. Omni-MATH-500 stays a held-out evaluation set.
+The output keeps `train_30k`'s format (`text`, `label`, `data_type`, plus `solve_rate`), so it goes straight into `DATA=`.
+
+Result for Qwen2.5-Math-1.5B-Instruct, on 2,998 random `train_30k` problems (60 min on a shared L40S):
+- Mean accuracy 32.0%; pass@8 57.7%.
+- Solved 0/8: 42%; solved 8/8: 10%.
+- **Mixed (1–7 of 8): 1,432 problems (48%)**, saved as `data/train_30k_mixed.jsonl`. Per-problem counts are in `data/train_30k_solve_rate_n8.jsonl`.
+
+A 40-step run with 8 prompts per step uses 320 of them. We use `train_30k` (the paper's training set) instead of MATH train: Qwen2.5-Math-1.5B-Instruct saturates MATH-level problems (most trees all right), and it was itself trained on MATH train. Omni-MATH-500 stays a held-out evaluation set.
 
 **2. ChainRL: the same script with independent chains.** `TREE="16 0 0 0"` samples 16 i.i.d. chains through the same EPTree manager, with no forks. The rest of the code path is identical, so the only difference from TreeRL is the tree shape.
 
@@ -62,9 +69,17 @@ python solve_rate.py --model ../ckpt/<TAG>/_actor_global_step40 --temperature 0 
 
 ```bash
 COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=40 DATA=mid_submission/data/train_30k_mixed.jsonl"
-env $COMMON TREE="6 2 1 2" TAG=treerl  scripts/treerl-qwen1.5b-1gpu.sh    # TreeRL
-env $COMMON TREE="8 0 0 0" TAG=chainrl scripts/treerl-qwen1.5b-1gpu.sh    # ChainRL
+env $COMMON TREE="6 2 1 2" TAG=qwen1.5b-treerl  scripts/treerl-qwen1.5b-1gpu.sh    # TreeRL
+env $COMMON TREE="8 0 0 0" TAG=qwen1.5b-chainrl scripts/treerl-qwen1.5b-1gpu.sh    # ChainRL
 ```
+
+Keep "qwen" in `TAG`: the released code picks the model family from the checkpoint path, so a resumed run from `ckpt/<TAG>/_actor_global_step10` must contain it.
+
+**Unattended version: `scripts/run_baselines.sh`.** It runs the base-model eval, TreeRL, ChainRL, then the eval of every saved checkpoint (steps 10–40, for learning curves).
+- Each stage waits until a GPU has enough free memory (`NEED_RL`, default 26 GB); finished stages are skipped on a re-run.
+- An RL run that crashes, or makes no step for 45 min, is restarted with `RESUME=1` from its newest checkpoint (3 tries). A resumed run starts with fresh Adam moments; the learning rate is constant (`--min_actor_learning_rate_lr 1`).
+- Our GPU memory is logged every minute to `ckpt/<TAG>.gpu_mem.log`, the measured VRAM for the section below.
+- Results go to `mid_submission/results/rl_eval.csv`, training metrics to `ckpt/<TAG>/train_log.jsonl`.
 
 The script uses the flags of the paper's `scripts/treerl-qw14b.sh`, with these differences:
 
