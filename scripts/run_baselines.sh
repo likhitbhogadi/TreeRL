@@ -28,13 +28,13 @@ our_gpu_mem() {  # MiB used by this user's processes on GPU $1
     while IFS=', ' read p m; do [ "$(ps -o user= -p $p)" = "$USER" ] && echo $m; done | awk '{s += $1} END {print s + 0}'
 }
 
-evaluate() {  # evaluate <model path or id> <name>: greedy accuracy on the eval sets -> mid_submission/results/rl_eval.csv
+evaluate() {  # evaluate <model path or id> <name> [solve_rate.py args]: greedy by default -> mid_submission/results/rl_eval.csv
   [ -f $DONE/eval_$2 ] && return
   for try in 1 2 3; do
     g=$(free_gpu $NEED_EVAL)
     echo "$(date +%T) eval $2 on GPU $g"
     if (cd mid_submission && CUDA_VISIBLE_DEVICES=$g HF_HUB_OFFLINE=1 python solve_rate.py --model $1 --temperature 0 \
-          --gpu_mem 0.28 --summary $DONE/eval_$2.csv --data $EVAL_SETS > $DONE/eval_$2.log 2>&1); then
+          --gpu_mem 0.28 --summary $DONE/eval_$2.csv --data $EVAL_SETS "${@:3}" > $DONE/eval_$2.log 2>&1); then
       tail -n +$([ -f mid_submission/results/rl_eval.csv ] && echo 2 || echo 1) $DONE/eval_$2.csv >> mid_submission/results/rl_eval.csv
       touch $DONE/eval_$2
       sleep 60  # let vLLM free its memory: a new engine's startup profiling fails if free memory changes
@@ -44,14 +44,14 @@ evaluate() {  # evaluate <model path or id> <name>: greedy accuracy on the eval 
   done
 }
 
-train() {  # train <tag> <"M N L T">
+train() {  # train <tag> <"M N L T"> [VAR=value overrides, e.g. STEPS=150 LR=5e-6]
   local dir=$ROOT/ckpt/$1
   for try in 1 2 3; do
     [ -f $dir/model.safetensors ] && return  # the final model is saved at the end of a completed run
     g=$(free_gpu $NEED_RL)
     resume=$(ls -d $dir/_actor_global_step* 2>/dev/null | head -1)
     echo "$(date +%T) train $1 (try $try) on GPU $g${resume:+, resuming}"
-    env $COMMON GPU=$g TREE="$2" TAG=$1 SAVE_DIR=$dir DATA=$DATA RESUME=${resume:+1} \
+    env $COMMON GPU=$g TREE="$2" TAG=$1 SAVE_DIR=$dir DATA=$DATA RESUME=${resume:+1} "${@:3}" \
       scripts/treerl-qwen1.5b-1gpu.sh > $ROOT/ckpt/$1.try$try.log 2>&1 &
     pid=$! start=$(date +%s)
     while kill -0 $pid 2>/dev/null; do
@@ -78,5 +78,19 @@ for run in "qwen1.5b-treerl-6-2-1-2|6 2 1 2" "qwen1.5b-chainrl-8|8 0 0 0"; do
   for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do  # right after training
     evaluate $c ${tag}_$(basename $c)
   done
+done
+
+# Lower-noise eval: 8 samples per problem at the training temperature (greedy scores moved within noise)
+SAMPLED="--n 8 --temperature 1.0"
+evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base_n8 $SAMPLED
+for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8; do
+  for step in 20 40; do evaluate $ROOT/ckpt/$tag/_actor_global_step$step ${tag}_step${step}_n8 $SAMPLED; done
+done
+
+# Longer TreeRL with a larger step: 40 steps at lr 1.5e-6 did not move greedy accuracy
+tag=qwen1.5b-treerl-6-2-1-2-lr5e-6-150
+train $tag "6 2 1 2" STEPS=150 LR=5e-6 SAVE_STEPS=50
+for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do
+  evaluate $c ${tag}_$(basename $c)_n8 $SAMPLED
 done
 echo "$(date +%T) BASELINES_DONE"

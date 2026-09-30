@@ -46,7 +46,7 @@ python train_reinforce_ray.py \
     --prompt_max_len 1024 \
     --generate_max_len $MAX_LEN \
     --zero_stage 2 --adam_offload --bf16 --gradient_checkpointing \
-    --actor_learning_rate 1.5e-6 --lr_scheduler_type cosine --min_actor_learning_rate_lr 1 --l2 0.1 \
+    --actor_learning_rate ${LR:-1.5e-6} --lr_scheduler_type cosine --min_actor_learning_rate_lr 1 --l2 0.1 \
     --init_kl_coef 0 \
     --prompt_data $DATA,1 \
     --input_key text --label_key label --source_key data_type \
