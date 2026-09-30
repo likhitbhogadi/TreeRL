@@ -28,6 +28,8 @@ def multi_reward_fn(rewards: List[torch.Tensor]):
 
 
 def _validate_args(args):
+    assert args.advantage_estimator != "grpo" or args.l == 0, \
+        "GRPO is defined on a group of independent samples: use --l 0 (no forks), --m = group size"
     actor_world_size = args.actor_num_nodes * args.actor_num_gpus_per_node
 
     assert (
@@ -385,6 +387,9 @@ if __name__ == "__main__":
     parser.add_argument("--overall_norm_style", type=str, default="none")
     parser.add_argument("--l2_logits_loss_coeff", type=float, default=0)
     parser.add_argument("--training_type", type=str, default="math")
+    parser.add_argument("--advantage_estimator", choices=["treerl", "grpo"], default="treerl",
+                        help="treerl: the tree's per-segment values; grpo: (r - mean) / std over each question's "
+                             "group of independent samples (DeepSeekMath), needs --l 0")
  
     args = parser.parse_args()
     train(args)

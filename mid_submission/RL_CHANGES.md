@@ -53,6 +53,8 @@ We checked what TreeRL's advantage code gives for chains by running `build_into_
 
 Matched budgets: TreeRL (6,2,1,2) generates 30 leaves (~14.5k tokens per problem in Task 2) and trains on 16 of them. ChainRL with 16 chains generates ~11.9k tokens and trains on all 16. So both train on the same number of responses, while TreeRL generates ~20% more tokens. For a token-matched comparison use `TREE="20 0 0 0" NUM_TRACE=16`.
 
+**GRPO** (DeepSeekMath) is a third baseline on the same chains: `TREE="8 0 0 0" ADV=grpo`; see [GRPO_CHANGES.md](GRPO_CHANGES.md).
+
 **3. Evaluation of checkpoints.** The same script scores any model or checkpoint:
 
 ```bash

@@ -6,6 +6,7 @@
 # Baselines (same code; only the tree shape differs, TREE="M N L T"):
 #   TreeRL (EPTree 6,2,1,2; 16 of its 30 leaves trained on):  TREE="6 2 1 2" NUM_TRACE=16
 #   ChainRL (16 i.i.d. chains, all trained on):              TREE="16 0 0 0" NUM_TRACE=16 TAG=...-chainrl
+#   GRPO (same 16 chains, group-normalized advantage):       TREE="16 0 0 0" NUM_TRACE=16 ADV=grpo TAG=...-grpo
 # Reduced budget (see RL_CHANGES.md): ROLLOUT=8 NUM_TRACE=8 TREE="6 2 1 2" (or "8 0 0 0") MAX_LEN=2048 STEPS=40
 #   DATA=mid_submission/data/train_30k_mixed.jsonl  (from mid_submission/solve_rate.py --keep_mixed)
 set -x
@@ -18,6 +19,7 @@ STEPS=${STEPS:-100}          # training steps; each step = ROLLOUT prompts x NUM
 ROLLOUT=${ROLLOUT:-16}       # prompts per step (paper: 16)
 NUM_TRACE=${NUM_TRACE:-16}   # leaves per tree used for training (paper: 16 of the 30 EPTree leaves)
 TREE=(${TREE:-6 2 1 2})      # EPTree M N L T; "16 0 0 0" = ChainRL (M i.i.d. chains; needs M >= NUM_TRACE)
+ADV=${ADV:-treerl}            # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
 MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
 RESUME=${RESUME:-}             # non-empty: resume from the newest $SAVE_DIR/_actor_global_step* (must exist)
 DATA=$(realpath "${DATA:-$ROOT/datasets/train/train_30k.jsonl}")  # absolute: Ray workers have their own cwd
@@ -54,6 +56,7 @@ python train_reinforce_ray.py \
     --num_trace_per_sample $NUM_TRACE \
     --task_type qwen-math-reinforce \
     --remote_rm_url $ROOT/scripts/remote_reward_url.json \
+    --advantage_estimator $ADV \
     --use_mcts --use_entropy_tree --m ${TREE[0]} --n ${TREE[1]} --l ${TREE[2]} --t ${TREE[3]} \
     --process_supervision --use_state_value_reward --use_pure_binary \
     --use_weighted_value --weighted_value_style sqrt \

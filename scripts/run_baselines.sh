@@ -1,6 +1,7 @@
 #!/bin/bash
 # Unattended baselines on the shared GPU box, at the reduced budget of mid_submission/RL_CHANGES.md:
-#   1. base-model eval   2. TreeRL (6,2,1,2) + eval of its checkpoints   3. ChainRL (8 chains) + eval of its checkpoints
+#   1. base-model eval   2-4. TreeRL (6,2,1,2), ChainRL (8 chains), GRPO (8 chains), each + eval of its checkpoints
+#   5. 8-sample eval of steps 20/40   6. a longer TreeRL run (150 steps, lr 5e-6) + its eval
 # Each stage waits for a GPU with enough free memory. Finished stages are skipped, so re-running continues
 # where it stopped. An RL run that dies (e.g. OOM because another user's job grew) or makes no progress for
 # 45 min waits for memory again and resumes from its newest checkpoint (3 tries).
@@ -72,9 +73,10 @@ train() {  # train <tag> <"M N L T"> [VAR=value overrides, e.g. STEPS=150 LR=5e-
 [ -s $DATA ] || { echo "missing $DATA (run mid_submission/solve_rate.py --keep_mixed first)"; exit 1; }
 evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base
 # tags contain "qwen": the released code picks the model family from the checkpoint path
-for run in "qwen1.5b-treerl-6-2-1-2|6 2 1 2" "qwen1.5b-chainrl-8|8 0 0 0"; do
-  tag=${run%%|*}
-  train $tag "${run#*|}"
+# tag | TREE | extra overrides. GRPO = ChainRL's 8 i.i.d. chains + group-normalized advantage (GRPO_CHANGES.md)
+for run in "qwen1.5b-treerl-6-2-1-2|6 2 1 2|" "qwen1.5b-chainrl-8|8 0 0 0|" "qwen1.5b-grpo-8|8 0 0 0|ADV=grpo"; do
+  IFS='|' read tag tree extra <<< "$run"
+  train $tag "$tree" $extra
   for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do  # right after training
     evaluate $c ${tag}_$(basename $c)
   done
@@ -83,7 +85,7 @@ done
 # Lower-noise eval: 8 samples per problem at the training temperature (greedy scores moved within noise)
 SAMPLED="--n 8 --temperature 1.0"
 evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base_n8 $SAMPLED
-for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8; do
+for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8 qwen1.5b-grpo-8; do
   for step in 20 40; do evaluate $ROOT/ckpt/$tag/_actor_global_step$step ${tag}_step${step}_n8 $SAMPLED; done
 done
 

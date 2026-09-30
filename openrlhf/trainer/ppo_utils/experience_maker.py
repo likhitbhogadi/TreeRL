@@ -88,6 +88,18 @@ class BatchingLLM:
         self.cv.notify_all()
 
 
+def grpo_advantages(paths):
+    """GRPO advantage (DeepSeekMath, Shao et al. 2024, Sec. 4.1.2, outcome supervision): every token of
+    sample i gets (r_i - mean(r)) / std(r) over the group of samples drawn for this question. Replaces the
+    tree values that gather_paths put on each path segment; r_i is the leaf's 0/1 reward."""
+    r = torch.tensor([float(path[-1]["pass_ratio"]) for path in paths])
+    adv = ((r - r.mean()) / (r.std(unbiased=False) + 1e-6)).tolist()  # all-equal group -> 0
+    for path, a in zip(paths, adv):
+        for segment in path:
+            segment["value"] = a
+    return paths
+
+
 def get_eos_token_id(tokenizer):
     return tokenizer.convert_tokens_to_ids("<|user|>")
 
@@ -3326,6 +3338,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
 
             paths,input_ids = parallel_mcts(item, llm, self.tokenize_fn, decode_fn, args,system_prompt=system_prompt)
         assert paths is not None, f"paths is None, prompts: {prompts}"
+        if self.strategy.args.advantage_estimator == "grpo":
+            paths = grpo_advantages(paths)
 
             
         # NOTE: concat all outputs to following format:
