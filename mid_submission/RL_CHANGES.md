@@ -22,7 +22,49 @@ GPU=1 STEPS=100 nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/treerl_rl.log 2>&1 
 ```
 
 - **Outputs:** checkpoints go to `ckpt/<TAG>/_actor_global_step<N>` every `SAVE_STEPS` (20). One line of metrics per step goes to `ckpt/<TAG>/train_log.jsonl`: reward, `pass_at_1` (mean leaf accuracy), `pass_rate` (share of trees with a correct leaf), response length, generate/rollout time, grad norm.
-- **Knobs** (environment variables): `GPU`, `STEPS`, `ROLLOUT` (prompts per step), `NUM_TRACE` (leaves per tree used for training), `VLLM_MEM` (share of the GPU vLLM takes while generating), `INFER_BS` (batch of the logprob pass), `MODEL`, `TAG`, `SAVE_DIR`, `SAVE_STEPS`.
+- **Knobs** (environment variables): `GPU`, `STEPS`, `ROLLOUT` (prompts per step), `NUM_TRACE` (leaves per tree used for training), `TREE` (EPTree `"M N L T"`; `"16 0 0 0"` = ChainRL), `MAX_LEN` (max response tokens), `DATA` (training JSONL), `VLLM_MEM` (share of the GPU vLLM takes while generating), `INFER_BS` (batch of the logprob pass), `MODEL`, `TAG`, `SAVE_DIR`, `SAVE_STEPS`.
+
+## Baselines: data, ChainRL, evaluation
+
+**1. Training data: only problems that produce a learning signal.** In TreeRL a tree whose leaves are all right or all wrong gets zero advantage, so it contributes no gradient. On our Task 2 Omni-MATH trees that was 60% of (6,2,1,2) trees; on the 20 MATH500 problems of the temperature test it was 65%, mostly all right.
+
+`solve_rate.py` samples 8 answers per problem from the base model (T = 1.0, the RL sampling settings) and keeps the problems solved 1–7 times out of 8:
+
+```bash
+cd mid_submission
+python solve_rate.py --data ../datasets/train/train_30k.jsonl --sample 3000 --n 8 --max_tokens 2048 \
+    --keep_mixed data/train_30k_mixed.jsonl --out data/train_30k_solve_rate_n8.jsonl
+```
+
+The output keeps `train_30k`'s format (`text`, `label`, `data_type`, plus `solve_rate`), so it goes straight into `DATA=`. We use `train_30k` (the paper's training set) instead of MATH train: Qwen2.5-Math-1.5B-Instruct saturates MATH-level problems (most trees all right), and it was itself trained on MATH train. Omni-MATH-500 stays a held-out evaluation set.
+
+**2. ChainRL: the same script with independent chains.** `TREE="16 0 0 0"` samples 16 i.i.d. chains through the same EPTree manager, with no forks. The rest of the code path is identical, so the only difference from TreeRL is the tree shape.
+
+We checked what TreeRL's advantage code gives for chains by running `build_into_tree_format` + `gather_paths` on fake trees:
+- **4 chains with rewards 1, 0, 0, 1:** every token gets ±1.33 = 2 × (own reward − mean of the other chains). That is the RLOO advantage; it is doubled because the global and local terms coincide without branching.
+- **One forked tree:** the shared prefix gets +0.35, the correct branch +1.82 and the wrong branch −1.18, i.e. per-segment credit.
+
+Matched budgets: TreeRL (6,2,1,2) generates 30 leaves (~14.5k tokens per problem in Task 2) and trains on 16 of them. ChainRL with 16 chains generates ~11.9k tokens and trains on all 16. So both train on the same number of responses, while TreeRL generates ~20% more tokens. For a token-matched comparison use `TREE="20 0 0 0" NUM_TRACE=16`.
+
+**3. Evaluation of checkpoints.** The same script scores any model or checkpoint:
+
+```bash
+cd mid_submission
+python solve_rate.py --model ../ckpt/<TAG>/_actor_global_step40 --temperature 0 --summary results/rl_eval.csv \
+    --data ../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl
+```
+
+- It appends one row per benchmark (model, data, problems, mean accuracy, pass@n) to `results/rl_eval.csv`.
+- Run it once on the base model (`--model Qwen/Qwen2.5-Math-1.5B-Instruct`) for the "before RL" row. Task 2's `b0_64` already gives the base model's sampled Omni-MATH-500 numbers (pass@1 25.9%, pass@16 44.4%).
+- `data/omni_math_500_seed0.jsonl` is the Task 2 problem set, now in the repo.
+
+**Recommended reduced run** (~2–3 h per method, estimated), identical for all methods:
+
+```bash
+COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=40 DATA=mid_submission/data/train_30k_mixed.jsonl"
+env $COMMON TREE="6 2 1 2" TAG=treerl  scripts/treerl-qwen1.5b-1gpu.sh    # TreeRL
+env $COMMON TREE="8 0 0 0" TAG=chainrl scripts/treerl-qwen1.5b-1gpu.sh    # ChainRL
+```
 
 The script uses the flags of the paper's `scripts/treerl-qw14b.sh`, with these differences:
 
@@ -132,8 +174,8 @@ The paper's schedule (2 epochs over 30k problems) is out of reach on one GPU, so
 
 ## Known limitations / next steps
 
-- **No evaluation during training** (the released code has a TODO there). Evaluate saved checkpoints on MATH500 / AMC / Omni-MATH-500 with vLLM, e.g. by reusing `tree_alloc/gen.py` and `verify.py`.
+- **No evaluation during training** (the released code has a TODO there). Score saved checkpoints afterwards with `solve_rate.py` (see [Baselines](#baselines-data-chainrl-evaluation)).
 - **Single GPU only.** Multi-GPU would need the NCCL weight sync ported to vLLM V1.
-- **ChainRL baseline:** same script with `--m 16 --n 0 --l 0 --t 0`, i.e. i.i.d. chains through the same code path. Not run yet.
+- **Not run yet at 1.5B:** TreeRL and ChainRL training (waiting for a GPU with ~30 GB free).
 - **Metric naming:** `response_overlong_ratio` in the log is really the share of responses that ended properly (the code's `overlong_mask` is 1 for a finished response).
 - **Our method:** Phase I / Phase II allocation plugs in where EPTree picks fork points (`entropy_chain_local_manager.py`). Everything downstream of the tree (advantages, loss, training) is reused as is.

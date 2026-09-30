@@ -3,6 +3,11 @@
 # Same algorithm flags as scripts/treerl-qw14b.sh; actor (DeepSpeed ZeRO-2, CPU Adam), and the vLLM engine
 # share the GPU. See mid_submission/RL_CHANGES.md.
 #   GPU=0 STEPS=100 nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/treerl_rl.log 2>&1 &
+# Baselines (same code; only the tree shape differs, TREE="M N L T"):
+#   TreeRL (EPTree 6,2,1,2; 16 of its 30 leaves trained on):  TREE="6 2 1 2" NUM_TRACE=16
+#   ChainRL (16 i.i.d. chains, all trained on):              TREE="16 0 0 0" NUM_TRACE=16 TAG=...-chainrl
+# Reduced budget (see RL_CHANGES.md): ROLLOUT=8 NUM_TRACE=8 TREE="6 2 1 2" (or "8 0 0 0") MAX_LEN=2048 STEPS=40
+#   DATA=mid_submission/data/train_30k_mixed.jsonl  (from mid_submission/solve_rate.py --keep_mixed)
 set -x
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd $ROOT
@@ -12,6 +17,10 @@ GPU=${GPU:-0}
 STEPS=${STEPS:-100}          # training steps; each step = ROLLOUT prompts x NUM_TRACE leaves
 ROLLOUT=${ROLLOUT:-16}       # prompts per step (paper: 16)
 NUM_TRACE=${NUM_TRACE:-16}   # leaves per tree used for training (paper: 16 of the 30 EPTree leaves)
+TREE=(${TREE:-6 2 1 2})      # EPTree M N L T; "16 0 0 0" = ChainRL (M i.i.d. chains; needs M >= NUM_TRACE)
+MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
+RESUME=${RESUME:-}             # non-empty: resume from the newest $SAVE_DIR/_actor_global_step* (must exist)
+DATA=$(realpath "${DATA:-$ROOT/datasets/train/train_30k.jsonl}")  # absolute: Ray workers have their own cwd
 TAG=${TAG:-qwen1.5b-math-treerl-6-2-1-2}
 SAVE_DIR=${SAVE_DIR:-$ROOT/ckpt/$TAG}
 mkdir -p $SAVE_DIR
@@ -35,20 +44,20 @@ python train_reinforce_ray.py \
     --num_episodes 1 \
     --max_samples $((STEPS * ROLLOUT)) \
     --prompt_max_len 1024 \
-    --generate_max_len 3072 \
+    --generate_max_len $MAX_LEN \
     --zero_stage 2 --adam_offload --bf16 --gradient_checkpointing \
     --actor_learning_rate 1.5e-6 --lr_scheduler_type cosine --min_actor_learning_rate_lr 1 --l2 0.1 \
     --init_kl_coef 0 \
-    --prompt_data $ROOT/datasets/train/train_30k.jsonl,1 \
+    --prompt_data $DATA,1 \
     --input_key text --label_key label --source_key data_type \
     --top_p 0.95 --temperature 1.0 \
     --num_trace_per_sample $NUM_TRACE \
     --task_type qwen-math-reinforce \
     --remote_rm_url $ROOT/scripts/remote_reward_url.json \
-    --use_mcts --use_entropy_tree --m 6 --n 2 --l 1 --t 2 \
+    --use_mcts --use_entropy_tree --m ${TREE[0]} --n ${TREE[1]} --l ${TREE[2]} --t ${TREE[3]} \
     --process_supervision --use_state_value_reward --use_pure_binary \
     --use_weighted_value --weighted_value_style sqrt \
     --mask_repeated_samples \
     --correct_bonus_ratio 1 --correct_bonus_threshold 0 \
-    --perf \
+    --perf ${RESUME:+--resume} \
     --wandb_run_name $TAG
