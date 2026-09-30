@@ -149,6 +149,11 @@ def train(args):
         for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
             refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
 
+    # Colocated on one GPU: finish loading the actor before vLLM starts. vLLM sizes its KV cache by profiling
+    # free memory at startup, and an actor still loading onto the same GPU makes that fail ("free memory
+    # changed during profiling" / "no available memory for the cache blocks").
+    ray.get(refs)
+
     # init vLLM engine for text generation
     vllm_engines = None
     if args.vllm_num_engines is not None:
