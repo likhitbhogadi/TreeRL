@@ -1,6 +1,8 @@
 from typing import List
 import math
+import multiprocessing
 import random
+import threading
 import requests
 import json
 import re
@@ -341,11 +343,37 @@ def check_equality(expr1: str, expr2: str, urls):
     return response.lower().strip() == "yes"
 
 
+def _math_verify_equal(pred, label):  # runs in a _math_verify pool worker
+    import math_verify
+
+    gold, ans = math_verify.parse(f"\\boxed{{{label}}}"), math_verify.parse(f"\\boxed{{{pred}}}")
+    return bool(gold and ans and math_verify.verify(gold, ans))
+
+
+_MV_POOL, _MV_LOCK = [None], threading.Lock()
+
+
+def _math_verify(pred, label, timeout=10):
+    """math_verify in a spawned process pool. evaluate_trees grades from threads, where math_verify's
+    signal-based timeout can't work and SymPy can hang forever on some answers; a pool worker, unlike a
+    thread, can be killed. A timeout counts as wrong and replaces the pool."""
+    with _MV_LOCK:
+        if _MV_POOL[0] is None:
+            _MV_POOL[0] = multiprocessing.get_context("spawn").Pool(4)
+        pool = _MV_POOL[0]
+    try:
+        return pool.apply_async(_math_verify_equal, (pred, label)).get(timeout)
+    except Exception:  # timeout or worker crash
+        with _MV_LOCK:
+            if _MV_POOL[0] is pool:
+                pool.terminate()
+                _MV_POOL[0] = None
+        return False
+
+
 def _local_check(response, label):
-    """Normalized string match of the last \\boxed{} for standalone runs without judge servers.
-    Called from evaluate_trees' thread pool, where math_verify's signal-based timeout can't work and
-    SymPy can hang forever on some answers, so no symbolic check here; callers re-grade leaves
-    properly in the main thread."""
+    """Grade the last \\boxed{} for runs without judge servers: normalized string match, then math_verify
+    (the string match alone misses 14% of the answers math_verify accepts on our Omni-MATH trees)."""
     i = response.rfind("\\boxed{")
     if i < 0:
         return None, 0
@@ -356,7 +384,7 @@ def _local_check(response, label):
             break
     pred = response[j + 1:k]
     norm = lambda s: re.sub(r"\s+|\$|\\left|\\right|\\!|\\,", "", s).replace("\\dfrac", "\\frac").rstrip(".")  # noqa: E731
-    return pred, int(norm(pred) == norm(label))
+    return pred, int(norm(pred) == norm(label) or _math_verify(pred, label))
 
 
 def check_result(
@@ -371,7 +399,7 @@ def check_result(
         if label == "":
             print("dummy label")
         return None, 0
-    if not checker_urls:  # standalone run: no LLM judge / extractor servers
+    if not any(checker_urls or []):  # no LLM judge / extractor servers (RL passes [None] when unset)
         return _local_check(response, label)
     answer = extract_answer(question, response, extractor_urls)
     if not answer:

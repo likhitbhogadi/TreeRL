@@ -57,46 +57,7 @@ class ActorReinforceTrainer(ReinforceTrainer):
             vllm_engines=self.vllm_engines,
         )
 
-        # Create torch group with deepspeed rank 0 and all vllm ranks
-        # to update vllm engine's weights after each training stage.
-        #
-        # Say we have 3 vllm engines and eache of them has 4 GPUs,
-        # then the torch group is:
-        # [    0,      1, 2, 3, 4,  5, 6, 7, 8,  9, 10, 11, 12]
-        # |ds rank 0 |  engine-0  |  engine-1  |   engine-2   |
-        #
-        # For ZeRO-1/2:
-        #   1. Broadcast parameters from rank 0 to all vllm engines
-        # For ZeRO-3:
-        #   1. AllGather paramters to rank 0
-        #   2. Broadcast parameters from rank 0 to all vllm engines
-        if self.vllm_engines is not None and torch.distributed.get_rank() == 0:
-            master_address = ray._private.services.get_node_ip_address()
-            with socket.socket() as sock:
-                sock.bind(("", 0))
-                master_port = sock.getsockname()[1]
-
-            vllm_num_engines, vllm_tensor_parallel_size = (
-                self.strategy.args.vllm_num_engines,
-                self.strategy.args.vllm_tensor_parallel_size,
-            )
-            world_size = vllm_num_engines * vllm_tensor_parallel_size + 1
-            refs = [
-                engine.init_process_group.remote(
-                    master_address, master_port, i * vllm_tensor_parallel_size + 1, world_size, "vllm"
-                )
-                for i, engine in enumerate(self.vllm_engines)
-            ]
-            self._model_update_group = init_process_group(
-                backend="nccl",
-                init_method=f"tcp://{master_address}:{master_port}",
-                world_size=world_size,
-                rank=0,
-                group_name="vllm",
-            )
-
-            ray.get(refs)
-
+        # vLLM is colocated on this GPU: weights go over CUDA IPC (_broadcast_to_vllm), no NCCL group
         torch.distributed.barrier()
 
     def reinforce_train(self, global_step):
@@ -108,7 +69,7 @@ class ActorReinforceTrainer(ReinforceTrainer):
         # if self.critic_train_remote:
             # critic_status_ref = self.critic.fit.remote()
 
-        # 3. actor model training
+        # 3. actor model training (the colocated vLLM engine is asleep since the rollout: see sample_responses_bymcts)
         status = super().reinforce_train(global_step)
 
         # 4. broadcast weights to vllm engines
@@ -127,30 +88,18 @@ class ActorReinforceTrainer(ReinforceTrainer):
         return self.training_step_actor(experience)
 
     def _broadcast_to_vllm(self):
+        """Hand the new weights to the colocated, sleeping vLLM engine as CUDA IPC handles (no copy).
+        Replaces the NCCL broadcast, which cannot run with both processes on one GPU."""
+        from torch.multiprocessing.reductions import reduce_tensor
+
+        assert self.strategy.args.zero_stage != 3, "IPC weight sync needs full parameters on the GPU (ZeRO-1/2)"
         torch.cuda.empty_cache()
-        
-        model = self.actor.model.module
-        count, num_params = 0, len(list(model.named_parameters()))
-        for name, param in model.named_parameters():
-            count += 1  # empty_cache at last param
-
-            # Fire all vllm engines for broadcast
-            if torch.distributed.get_rank() == 0:
-                shape = param.shape if self.strategy.args.zero_stage != 3 else param.ds_shape
-                [
-                    engine.update_weight.remote(name, dtype=param.dtype, shape=shape, empty_cache=count == num_params)
-                    for engine in self.vllm_engines
-                ]
-
-            if self.strategy.args.zero_stage != 3:
-                # For ZeRO-1/2, broadcast parameter to all vllm engines by rank 0
-                if torch.distributed.get_rank() == 0:
-                    torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
-            else:
-                # For ZeRO-3, allgather sharded parameter and broadcast to all vllm engines by rank 0
-                with deepspeed.zero.GatheredParameters(_z3_params_to_fetch([param]), enabled=True):
-                    if torch.distributed.get_rank() == 0:
-                        torch.distributed.broadcast(param.data, 0, group=self._model_update_group)
+        torch.cuda.synchronize()
+        handles = [(name, reduce_tensor(p.data)) for name, p in self.actor.model.module.named_parameters()]
+        for engine in self.vllm_engines:
+            ray.get(engine.wake_up.remote())
+            ray.get(engine.update_weights_cuda_ipc.remote(handles))
+        del handles
 
     # def _broadcast_to_reference_model(self):
     #     model = self.actor.model.module

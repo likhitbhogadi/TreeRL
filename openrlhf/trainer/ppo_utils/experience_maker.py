@@ -1,8 +1,10 @@
 from itertools import chain
 import logging
 import random
+import threading
 import time
 from abc import ABC
+from concurrent.futures import ThreadPoolExecutor
 from copy import copy, deepcopy
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
@@ -40,6 +42,50 @@ from openrlhf.trainer.ppo_utils.parallel_mcts import parallel_mcts
 from openrlhf.trainer.ppo_utils.entropy_guided_tree_search import parallel_entropy_guided_tree
 
 logger = init_logger(__name__)
+
+
+class BatchingLLM:
+    """Stands in for the vLLM engine for `n` threads that each build one EPTree. A thread's generate()
+    blocks until every still-running thread has submitted too, then all prompts go to vLLM in one call.
+    EPTree's rounds (M chains, then each fork round) line up across trees, so each round of the whole
+    rollout batch becomes one large vLLM batch instead of n small sequential ones."""
+
+    def __init__(self, engine, n):
+        self.engine, self.n = engine, n
+        self.cv = threading.Condition()
+        self.pending = []  # (prompts, sampling_params, result slot)
+
+    def generate(self, prompts, sampling_params, use_tqdm=False):
+        slot = {}
+        with self.cv:
+            self.pending.append((prompts, sampling_params, slot))
+            self._run_if_all_waiting()
+            while "out" not in slot:
+                self.cv.wait()
+        if isinstance(slot["out"], Exception):
+            raise slot["out"]
+        return slot["out"]
+
+    def done(self):  # a thread finished its tree (or failed): stop waiting for it
+        with self.cv:
+            self.n -= 1
+            self._run_if_all_waiting()
+
+    def _run_if_all_waiting(self):
+        if not self.pending or len(self.pending) < self.n:
+            return
+        batch, self.pending = self.pending, []
+        prompts = [p for ps, _, _ in batch for p in ps]
+        params = [sp for ps, sp, _ in batch for _ in ps]
+        try:
+            outs = ray.get(self.engine.generate.remote(prompts, params, use_tqdm=False))
+        except Exception as e:  # each caller retries (query_local_vllm_ids_with_logprobs)
+            outs = e
+        i = 0
+        for ps, _, slot in batch:
+            slot["out"] = outs if isinstance(outs, Exception) else outs[i:i + len(ps)]
+            i += len(ps)
+        self.cv.notify_all()
 
 
 def get_eos_token_id(tokenizer):
@@ -432,8 +478,11 @@ def _tokenize_fn_llama(tokenizer, prompt, history, max_length, tokenize_type="pr
                 conversation.append({"role": "user", "content": x["prompt"]})
                 conversation.append({"role": "assistant", "content": x["response"]})
         conversation.append({"role": "user", "content": prompt})
-        sample_input_ids = tokenizer.apply_chat_template(conversation)
-        sample_input_ids = sample_input_ids[-(max_length-1):] + tokenizer.encode("<｜Assistant｜>")[1:]
+        # add_generation_prompt appends the model's own assistant header (the released code hard-coded
+        # R1-distill's "<｜Assistant｜>", which is garbage for Qwen); return_dict=False: transformers>=5
+        # returns a BatchEncoding by default
+        sample_input_ids = tokenizer.apply_chat_template(conversation, add_generation_prompt=True, return_dict=False)
+        sample_input_ids = sample_input_ids[-max_length:]
     elif tokenize_type == "response":
         sample_input_ids = tokenizer.encode(prompt)[1:]
         sample_input_ids = sample_input_ids[-(max_length):]
@@ -2102,20 +2151,34 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         prompts = [_questions, _history, _labels, _sources]
         
         _overlong_masks = []
+        _pass_ratio, _pass_at_1 = [], []
+
+        # Build the trees of all prompts concurrently, merging their vLLM calls into one batch: one tree at
+        # a time keeps only M..M*N*T sequences in flight and leaves the GPU mostly idle.
+        start = time.time()
+        rank = torch.distributed.get_rank()
+        batching_llm = BatchingLLM(self.vllm_engines[rank % len(self.vllm_engines)], micro_batch_size_roll_out)
+
+        def build_tree(i):
+            try:  # prompt i: [question, history, label, source]
+                batch_prompts = [p[i] if p is not None else None for p in prompts]
+                return self._generate_vllm_mcts(batch_prompts, num_trace_per_sample, llm=batching_llm, **generate_kwargs)
+            finally:
+                batching_llm.done()
+
+        with ThreadPoolExecutor(micro_batch_size_roll_out) as pool:
+            trees = list(pool.map(build_tree, range(micro_batch_size_roll_out)))
+        # free the colocated vLLM engine's GPU memory for the logprob pass and training; it wakes itself
+        # on the next generate(), and the weight sync after training wakes it too
+        ray.get(batching_llm.engine.sleep.remote())
+        _generate_time += time.time() - start
+
         # for i in range(0, micro_batch_size_roll_out, generate_batch_size):
         for i in range(0, micro_batch_size_roll_out):
-            batch_prompts = [
-                prompts[0][i],  # question
-                prompts[1][i],  # history
-                prompts[2][i] if prompts[2] is not None else None, # labels
-                prompts[3][i] if prompts[3] is not None else None # sources
-            ]
-            start = time.time()
-            
-            sequences, rewards, attention_mask, action_mask, overlong_mask, pass_ratio, pass_at_1 = (
-                self._generate_vllm_mcts(batch_prompts, num_trace_per_sample, **generate_kwargs)
-            )
+            sequences, rewards, attention_mask, action_mask, overlong_mask, pass_ratio, pass_at_1 = trees[i]
             _overlong_masks.append(overlong_mask)
+            _pass_ratio += [pass_ratio] * len(sequences)
+            _pass_at_1 += [pass_at_1] * len(sequences)
             # with open("/workspace/lurui/openrlhf-glm/logs/outputs/tree_sequences.jsonl","a") as f:
             #     decoded_text = self.tokenizer.decode(sequences[0], skip_special_tokens=False)
             #     f.write(json.dumps({"type":"tree","decoded_text":decoded_text}) + "\n")
@@ -2125,8 +2188,6 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             batch_labels = [prompts[2] for i in range(0,len(sequences))] if prompts[2] is not None else None
             batch_sources = [prompts[3] for i in range(0,len(sequences))] if prompts[3] is not None else None
             # ------ efficient implementation -----
-
-            _generate_time += time.time() - start
 
             num_actions = action_mask.size(1)
             sequences_cpu, rewards_cpu, attention_mask_cpu, action_mask_cpu = (
@@ -2154,7 +2215,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     micro_labels = batch_labels[micro_i * forward_batch_size: (micro_i+1) * forward_batch_size]
                 else:
                     micro_labels = None
-                base_action_log_probs_ref = self.initial_model.forward.remote(micro_sequences_cpu, num_actions, micro_attention_mask_cpu)
+                # no reference model when the KL coefficient is 0 (the paper's setting): KL is then 0
+                base_action_log_probs_ref = self.initial_model.forward.remote(micro_sequences_cpu, num_actions, micro_attention_mask_cpu) if self.initial_model is not None else None
 
                 # values
                 if self.critic:
@@ -2226,13 +2288,13 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                         r_models = [x.to(device) for x in ref_values[1:]]
                         r_models = self.reward_fn(r_models) if len(r_models) > 0 else r_models[0]
                     else:
-                        ref_values = ray.get([base_action_log_probs_ref] + r_refs)
+                        ref_values = ray.get([base_action_log_probs_ref] + r_refs) if base_action_log_probs_ref is not None else [action_log_probs]
                         r_models = None
                     base_action_log_probs = ref_values[0]
                     base_action_log_probs = base_action_log_probs.to(device)
                     value = None
                     # r = r_refs
-                    
+
                 wait_time = time.time() - start
 
 
@@ -2359,16 +2421,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                 r[repeated_mask == 0] = -1
 
         if self.remote_reward_url:
-            # 创建一个和r一样形状的pass_rate,每个数据都是pass_rate
-            pass_rate = torch.full_like(r, pass_ratio).to(action_log_probs.device)
-            pass_at_1_rate = torch.full_like(r, pass_at_1).to(action_log_probs.device)
-            if pass_ratio > 0.8:
-                pass_rate_mask = torch.full_like(r, 0).to(action_log_probs.device)
-            else:
-                pass_rate_mask = torch.full_like(r, 1).to(action_log_probs.device)
+            # per-sample pass rates of each sample's own tree (was: the last tree's value for the whole batch)
+            pass_rate = torch.tensor(_pass_ratio, dtype=torch.float, device=action_log_probs.device)
+            pass_at_1_rate = torch.tensor(_pass_at_1, dtype=torch.float, device=action_log_probs.device)
+            pass_rate_mask = (pass_rate <= 0.8).float().view(-1, 1)
 
             if self.strategy.args.mask_pass_confident_samples:
-                assert pass_rate_mask.shape == r.shape, f"pass_rate_shape: {pass_rate_mask.shape}, r_shape: {r.shape}"
                 r = r * pass_rate_mask
         else:
             pass_rate = torch.zeros(action_log_probs.shape[0], device=device)
@@ -2393,7 +2451,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             "overlong_mask": overlong_mask,
             "pass_at_1": pass_at_1_rate,
         }
-    
+
     def sample_responses_bymcts_use_vinevalue(self, prompts: List[str], num_trace_per_sample: int = 1,file_name = "test.jsonl",use_sentence_level_value:bool = False, **generate_kwargs):
         if self.strategy.args.process_supervision:
             return self.sample_responses_prm(prompts, num_trace_per_sample, **generate_kwargs)
@@ -3102,13 +3160,13 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         overlong_mask = torch.tensor(overlong).to("cuda") # 1 for long, 0 for short
         return sequences.to("cuda"), attention_mask.to("cuda"), action_mask.to("cuda"), overlong_mask
     
-    def _generate_vllm_mcts(self, prompts: List[str], num_trace_per_sample:int, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _generate_vllm_mcts(self, prompts: List[str], num_trace_per_sample:int, llm=None, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         from vllm import SamplingParams
         coeff = 0.3
 
-        # round-robin load balance
+        # round-robin load balance (llm: a BatchingLLM shared by the trees built concurrently)
         rank = torch.distributed.get_rank()
-        llm = self.vllm_engines[rank % len(self.vllm_engines)]
+        llm = llm or self.vllm_engines[rank % len(self.vllm_engines)]
 
         if "glm" in self.current_model.lower():
             eos_token_id = self.tokenizer.convert_tokens_to_ids("<|user|>")
@@ -3116,7 +3174,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         else:
             # assert False, "Not supported model except for ChatGLM."
             eos_token_id = self.tokenizer.eos_token_id
-            eos_token_set = [self.tokenizer.eos_token_id]
+            # Qwen: <|im_end|> plus <|endoftext|> (= pad), which vLLM also stops on via generation_config
+            eos_token_set = sorted({self.tokenizer.eos_token_id, self.tokenizer.pad_token_id})
 
         item = {"problem": prompts[0], "golden_answer": prompts[2]}
         assert prompts[2] is not None, f"labels is None, prompts: {prompts}"
@@ -3180,7 +3239,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "evaluator_urls": [judge_url],
                     "extractor_urls": [extractor_url],
                     "entropy_rm_urls": [entropy_rm_url],
-                    "eos_tokens": ["<|im_end|>"],
+                    "eos_tokens": eos_token_set,  # vLLM stop_token_ids take ids; was ["<|im_end|>"]
                     "num_traces": num_trace_per_sample,
                     "use_pure_binary" :kwargs.get("use_pure_binary", False),
                     "use_pure_RM" : kwargs.get("use_pure_RM", False),

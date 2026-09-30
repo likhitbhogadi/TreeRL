@@ -1,47 +1,26 @@
-import importlib
-import inspect
-
 import torch
-from vllm.worker.worker import Worker
 
-from openrlhf.utils.distributed_util import init_process_group
 from openrlhf.utils.logging import init_logger
 
 logger = init_logger(__name__)
 
 
-class WorkerWrap(Worker):
-    def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name):
-        """Init torch process group for model weights update"""
-        assert torch.distributed.is_initialized(), f"default torch process group must be initialized"
-        assert group_name != "", f"group name must not be empty"
+class WorkerWrap:
+    """vLLM (>=0.10, V1 engine) worker extension, passed as `worker_extension_cls`: its methods become
+    worker methods callable through `LLM.collective_rpc`.
 
-        rank = torch.distributed.get_rank() + rank_offset
-        print(f"WorkerWrap init_process_group - rank {rank}")
-        self._model_update_group = init_process_group(
-            backend="nccl",
-            init_method=f"tcp://{master_address}:{master_port}",
-            world_size=world_size,
-            rank=rank,
-            group_name=group_name,
-        )
-        logger.info(
-            f"init_process_group: master_address={master_address}, master_port={master_port}, "
-            f"rank={rank}, world_size={world_size}, group_name={group_name}"
-        )
+    Replaces the old `vllm.worker.worker.Worker` subclass (that module is gone in vLLM V1) and its NCCL
+    broadcast, which cannot work when the actor and vLLM share one GPU (NCCL rejects two ranks on the
+    same device). The actor sends CUDA IPC handles of its own weight tensors instead: no copy, no NCCL.
+    """
 
-    def update_weight(self, name, dtype, shape, empty_cache=False):
-        """Broadcast weight to all vllm workers from source rank 0 (actor model)"""
-        if torch.distributed.get_rank() == 0:
-            logger.debug(f"update weight: {name}, dtype: {dtype}, shape: {shape}")
-
-        assert dtype == self.model_config.dtype, f"mismatch dtype: src {dtype}, dst {self.model_config.dtype}"
-        weight = torch.empty(shape, dtype=dtype, device="cuda")
-        torch.distributed.broadcast(weight, 0, group=self._model_update_group)
-
-        self.model_runner.model.load_weights(weights=[(name, weight)])
-
-        del weight
-        # TODO: should we empty cache if all weights have updated?
-        # if empty_cache:
-        #     torch.cuda.empty_cache()
+    def update_weights_cuda_ipc(self, handles):
+        """handles: [(name, (rebuild_fn, rebuild_args))] from torch's `reduce_tensor(param)` in the actor."""
+        weights = []
+        for name, (rebuild, args) in handles:
+            args = list(args)
+            args[6] = self.device.index  # the producer's device index; same physical GPU here
+            weights.append((name, rebuild(*args)))
+        self.model_runner.get_model().load_weights(weights=weights)  # get_model() unwraps CUDA-graph wrappers
+        torch.cuda.synchronize()
+        del weights

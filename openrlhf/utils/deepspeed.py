@@ -323,9 +323,12 @@ class DeepspeedStrategy(ABC):
                 vv = v.data.cpu()
                 output_state_dict[k] = vv
 
+            # tied lm_head.weight is in state_dict but not in named_parameters (the corner case handled below,
+            # which the released code only reached after this assert)
+            tied = getattr(model_to_save.config, "tie_word_embeddings", False) and "lm_head.weight" in state_dict
             assert len(output_state_dict) == len(
                 state_dict
-            ), f"mismatch size output_state_dict({len(output_state_dict)}) and state_dict({len(state_dict)})"
+            ) - tied, f"mismatch size output_state_dict({len(output_state_dict)}) and state_dict({len(state_dict)})"
 
             # only save peft weights https://github.com/microsoft/DeepSpeed/issues/4295
             # if isinstance(model_to_save, PeftModel):

@@ -1,9 +1,6 @@
 import os
-from typing import Dict, List
 
 import ray
-from ray.util.placement_group import placement_group
-from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 
 from openrlhf.utils.logging import init_logger
 
@@ -12,74 +9,49 @@ logger = init_logger(__name__)
 
 @ray.remote
 class LLMRayActor:
+    """vLLM engine as a Ray actor, colocated on the actor's GPU (vLLM >= 0.10, V1 engine).
+
+    The engine runs in this process (VLLM_ENABLE_V1_MULTIPROCESSING=0), so `collective_rpc` passes the
+    CUDA IPC handles to the worker as plain Python objects. Outside tree generation the engine sleeps
+    (its GPU memory freed) so the logprob pass and the training step can use the memory.
+    """
+
     def __init__(self, *args, **kwargs):
+        os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+        # FlashInfer's sampler JIT-compiles with the system nvcc (12.0 on pkgpu2, too old for torch cu129);
+        # use vLLM's PyTorch sampler, as mid_submission/tree_alloc/gen.py does
+        os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
         import vllm
 
-        assert vllm.__version__ >= "0.4.1", "OpenRLHF only supports vLLM >= 0.4.1"
+        self.llm = vllm.LLM(*args, worker_extension_cls="openrlhf.trainer.ray.vllm_worker_wrap.WorkerWrap",
+                            enable_sleep_mode=True, **kwargs)
 
-        self.use_gpu_executor = kwargs["tensor_parallel_size"] == 1
+    asleep = False
 
-        # See https://github.com/vllm-project/vllm/blob/main/vllm/executor/gpu_executor.py
-        if self.use_gpu_executor:
-            from openrlhf.trainer.ray.vllm_worker_wrap import WorkerWrap
+    def generate(self, prompts=None, sampling_params=None, prompt_token_ids=None, use_tqdm=False):
+        # vLLM >= 0.10 dropped `prompt_token_ids=`; callers in ppo_utils still pass it
+        if prompt_token_ids is not None:
+            from vllm.inputs import TokensPrompt
 
-            vllm.worker.worker.Worker = WorkerWrap
-        else:
-            # RayGPUExecutor
-            # See the patch https://github.com/vllm-project/vllm/commit/479d69fad0538f04cb22bf13e76ff91cfeb8a4e5
-            kwargs["worker_use_ray"] = True
+            prompts = [TokensPrompt(prompt_token_ids=p) for p in prompt_token_ids]
+        self.wake_up()
+        return self.llm.generate(prompts, sampling_params, use_tqdm=use_tqdm)
 
-            if vllm.__version__ > "0.4.1":
-                RayWorkerWrapperPath = vllm.executor.ray_utils
-            else:
-                RayWorkerWrapperPath = vllm.engine.ray_utils
+    def sleep(self):
+        """Level 1: weights to CPU, KV cache freed. Waking is then always safe (weights come back), so
+        the rollout can sleep the engine as soon as its trees are built."""
+        if not self.asleep:
+            self.llm.sleep(level=1)
+            self.asleep = True
 
-            class RayWorkerWrapper(RayWorkerWrapperPath.RayWorkerWrapper):
-                def __init__(self, *args, **kwargs) -> None:
-                    kwargs["worker_module_name"] = "openrlhf.trainer.ray.vllm_worker_wrap"
-                    kwargs["worker_class_name"] = "WorkerWrap"
-                    super().__init__(*args, **kwargs)
+    def wake_up(self):
+        if self.asleep:
+            self.llm.wake_up()
+            self.asleep = False
 
-            RayWorkerWrapperPath.RayWorkerWrapper = RayWorkerWrapper
-
-        self.llm = vllm.LLM(*args, **kwargs)
-
-    def generate(self, *args, **kwargs):
-        return self.llm.generate(*args, **kwargs)
-
-    # def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name):
-    #     if self.use_gpu_executor:
-    #         return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
-    #             master_address, master_port, rank_offset, world_size, group_name
-    #         )
-    #     else:
-    #         return self.llm.llm_engine.model_executor._run_workers(
-    #             "init_process_group", master_address, master_port, rank_offset, world_size, group_name
-    #         )
-
-    def init_process_group(self, master_address, master_port, rank_offset, world_size, group_name, backend="nccl"):
-        if self.use_gpu_executor:
-            return self.llm.llm_engine.model_executor.driver_worker.init_process_group(
-                master_address, master_port, rank_offset, world_size, group_name
-            )
-        else:
-            return self.llm.llm_engine.model_executor._run_workers(
-                "init_process_group", master_address, master_port, rank_offset, world_size, group_name
-            )
-
-    def update_weight(self, name, dtype, shape, empty_cache=False):
-        # self.stop_remote_worker_execution_loop()
-
-        if self.use_gpu_executor:
-            return self.llm.llm_engine.model_executor.driver_worker.update_weight(name, dtype, shape, empty_cache)
-        else:
-            return self.llm.llm_engine.model_executor._run_workers("update_weight", name, dtype, shape, empty_cache)
-
-    def stop_remote_worker_execution_loop(self):
-        # Fix error for using 2 communication group
-        # https://github.com/vllm-project/vllm/commit/eb6d3c264d0cd8e44dec16bca7947fbe96415ce9#diff-e1ad69e38e033accddfa5480ec808c4740eb39244d1ef51cc3407e20dde8cfd4
-        if self.__version__ > "0.4.2":
-            self.llm.llm_engine.model_executor.stop_remote_worker_execution_loop()
+    def update_weights_cuda_ipc(self, handles):
+        self.llm.collective_rpc("update_weights_cuda_ipc", args=(handles,))
+        self.llm.reset_prefix_cache()  # cached prefixes were computed with the old weights
 
 
 def create_vllm_engines(
@@ -87,46 +59,21 @@ def create_vllm_engines(
     tensor_parallel_size: int,
     pretrain: str,
     seed: int,
-    enable_prefix_caching: bool = False):
-    vllm_engines = []
-    for _ in range(num_engines):
-        # When tensor_parallel_size=1, vLLM init model in LLMEngine directly, assign 1 GPU for it.
-        num_gpus = int(tensor_parallel_size == 1)
-        scheduling_strategy = None
-
-        if tensor_parallel_size > 1:
-            bundles = [{"GPU": 1, "CPU": 1}] * tensor_parallel_size
-            pg = placement_group(bundles)
-            ray.get(pg.ready())
-
-            scheduling_strategy = PlacementGroupSchedulingStrategy(
-                placement_group=pg, placement_group_capture_child_tasks=True, placement_group_bundle_index=0
-            )
-
-        vllm_engines.append(
-            LLMRayActor.options(
-                num_cpus=1,
-                num_gpus=num_gpus,
-                scheduling_strategy=scheduling_strategy,
-            ).remote(
-                pretrain,
-                trust_remote_code=True,
-                tensor_parallel_size=tensor_parallel_size,
-                dtype="bfloat16",
-                gpu_memory_utilization=0.9,
-                max_num_batched_tokens=300000,
-                # gpu_memory_utilization=0.85,
-                seed=int(seed) + _,
-                max_model_len=23856,
-                enable_prefix_caching=enable_prefix_caching,
-                # enforce_eager=True
-            )
+    enable_prefix_caching: bool = False,
+    gpu_memory_utilization: float = 0.9,
+    max_model_len: int = 4096,
+    num_gpus: float = 1,
+):
+    # ponytail: one colocated engine, TP=1 only (the single-GPU setup); multi-GPU needs NCCL weight sync back
+    assert num_engines == 1 and tensor_parallel_size == 1, "only one colocated TP=1 vLLM engine is supported"
+    return [
+        LLMRayActor.options(num_cpus=1, num_gpus=num_gpus).remote(
+            pretrain,
+            trust_remote_code=True,
+            dtype="bfloat16",
+            gpu_memory_utilization=gpu_memory_utilization,
+            seed=int(seed),
+            max_model_len=max_model_len,
+            enable_prefix_caching=enable_prefix_caching,
         )
-
-    return vllm_engines
-
-
-if __name__ == "__main__":
-    llm = LLMRayActor.remote("/workspace/zhenyu/checkpoints/32b/32b-codev2-0227/chatglm32b-cv2-chat", trust_remote_code=True, tensor_parallel_size=2)
-    output = ray.get(llm.generate.remote("San Franciso is a"))
-    print(f"output: {output}")
+    ]

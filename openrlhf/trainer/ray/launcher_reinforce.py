@@ -121,7 +121,8 @@ class ReinforceRayActorGroup:
             len(reward_model_groups) == 1 or reward_fn is not None
         ), "reward_fn must be specified if using multiple reward models"
 
-        initial_actors = initial_model_group._actor_handlers
+        # no reference model when the KL coefficient is 0 (train_reinforce_ray.py skips it)
+        initial_actors = initial_model_group._actor_handlers if initial_model_group is not None else [None]
 
         refs = []
         # TODO(wuxibin): actor model choose reward/initial model in a

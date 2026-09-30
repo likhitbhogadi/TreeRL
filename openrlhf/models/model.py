@@ -6,7 +6,7 @@ import torch.nn as nn
 # from peft import LoraConfig, TaskType, get_peft_config, get_peft_model
 # from peft.tuners.lora import LoraLayer
 from transformers import AutoConfig, AutoModel
-from transformers.deepspeed import HfDeepSpeedConfig
+from transformers.integrations import HfDeepSpeedConfig  # transformers>=5 dropped transformers.deepspeed
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.models.mixtral.modeling_mixtral import MixtralSparseMoeBlock
 
