@@ -21,6 +21,7 @@ CUDA_VISIBLE_DEVICES=0 PYTHONPATH=. python scripts/check_vllm_weight_sync.py
 GPU=1 STEPS=100 nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/treerl_rl.log 2>&1 &
 ```
 
+- **Status at a glance:** `python3 scripts/status.py` on the server (or `watch -n 60 python3 scripts/status.py`): what is training or being scored now, every run's progress and checkpoints, scores, paired differences vs. the base model, and the pipeline's remaining stages.
 - **Outputs:** checkpoints go to `ckpt/<TAG>/_actor_global_step<N>` every `SAVE_STEPS` (20). One line of metrics per step goes to `ckpt/<TAG>/train_log.jsonl`: reward, `pass_at_1` (mean leaf accuracy), `pass_rate` (share of trees with a correct leaf), response length, generate/rollout time, grad norm.
 - **Knobs** (environment variables): `GPU`, `STEPS`, `ROLLOUT` (prompts per step), `NUM_TRACE` (leaves per tree used for training), `TREE` (EPTree `"M N L T"`; `"16 0 0 0"` = ChainRL), `MAX_LEN` (max response tokens), `DATA` (training JSONL), `LR`, `RESUME`, `KEEP_VLLM` (non-empty: vLLM keeps its memory through training, see below), `VLLM_MEM` (share of the GPU vLLM takes while generating), `INFER_BS` (batch of the logprob pass), `MODEL`, `TAG`, `SAVE_DIR`, `SAVE_STEPS`.
 
