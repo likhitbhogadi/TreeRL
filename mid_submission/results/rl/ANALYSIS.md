@@ -85,6 +85,29 @@ Comparing two models **on the same problems** (a paired test) cancels the proble
 4. **TreeRL vs. the baselines cannot be decided yet.** Long ChainRL has only step 50 (74.4 / 45.5 / 26.9, similar to TreeRL @50), and long GRPO has no checkpoint yet.
 5. **Compute and memory.** All runs peaked at 18.5–21 GB of GPU memory, so they fit easily in 40 GB. On a GPU without other users, a TreeRL step takes ~1 min, and a ChainRL/GRPO step about half that.
 
+## Update 2026-10-01 evening: paired results, data overlap, paper protocol
+
+**Paired results** (`paired.csv`, 8 samples per problem, same problems as the base model, pooled over all 1,082 test problems):
+
+| Checkpoint | Gain vs base | 95% CI |
+|---|---|---|
+| TreeRL long @50 | +0.20 | [−0.45, +0.87] |
+| TreeRL long @100 | +0.23 | [−0.51, +0.94] |
+| **TreeRL long @150** | **+0.92** | **[+0.20, +1.69]** |
+| ChainRL long @50 | +0.12 | [−0.64, +0.84] |
+| GRPO long @50 | −0.37 | [−1.04, +0.34] |
+
+By benchmark, TreeRL @150 is MATH500 +0.95 [−0.25, +2.08], AMC +3.16 [−0.30, +6.63] and Omni +0.53 [−0.48, +1.58]. The earlier unpaired "+1.7 on MATH500" came from comparing two separate scorings: re-scoring the base model gave 74.0 instead of 73.5. AMC is now counted over all 83 problems; its ids repeat across its two contests, and an earlier version keyed on them and counted 49.
+
+**Train/test overlap.** `train_30k` contains Omni-MATH problems, and 454 of the 500 Omni-MATH-500 test problems are in it. Our 1,200 long-run training problems contain 14 Omni-MATH-500 problems and 1 MATH500 problem; AMC is clean. With those 15 removed, TreeRL @150 is **+0.78 [+0.04, +1.57]** over the remaining 1,067 problems. Future training sets should drop every eval problem before sampling.
+
+**How the paper sets up TreeRL vs. ChainRL (Sec. 4.1), next to ours:**
+- **Paper:** TreeRL (6,2,1,2) generates 30 answers per problem and trains on **all 30** (batch 480). ChainRL samples **16** chains (batch 256). The two are matched on *generated tokens*.
+- **Ours:** every method trains on 8 answers per problem; ChainRL and GRPO sample 8 chains. So our TreeRL generates ~2.4× the tokens of our baselines but trains on the same number of answers.
+- **Other settings:** the paper uses KL β = 1e-4 (its released script uses 0, as we do), temperature 1.2 (we use 1.0) and max length 8,192 (we use 2,048).
+
+The page "TreeRL Experiment Map" (claude.ai artifact) puts the flow, the code origin, the settings, the data and these results on one page.
+
 ## Reruns needed
 
 | | What | Why | Cost | Priority |
