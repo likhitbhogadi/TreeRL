@@ -16,7 +16,10 @@ class LLMRayActor:
     (its GPU memory freed) so the logprob pass and the training step can use the memory.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, keep_memory=False, **kwargs):
+        # keep_memory: never sleep, so other users of a shared GPU cannot take vLLM's memory between rollouts
+        # (a sleeping engine that cannot get its memory back fails on wake-up with CUDA out of memory)
+        self.keep_memory = keep_memory
         os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
         # FlashInfer's sampler JIT-compiles with the system nvcc (12.0 on pkgpu2, too old for torch cu129);
         # use vLLM's PyTorch sampler, as mid_submission/tree_alloc/gen.py does
@@ -40,7 +43,7 @@ class LLMRayActor:
     def sleep(self):
         """Level 1: weights to CPU, KV cache freed. Waking is then always safe (weights come back), so
         the rollout can sleep the engine as soon as its trees are built."""
-        if not self.asleep:
+        if not self.asleep and not self.keep_memory:
             self.llm.sleep(level=1)
             self.asleep = True
 
@@ -63,12 +66,14 @@ def create_vllm_engines(
     gpu_memory_utilization: float = 0.9,
     max_model_len: int = 4096,
     num_gpus: float = 1,
+    keep_memory: bool = False,
 ):
     # ponytail: one colocated engine, TP=1 only (the single-GPU setup); multi-GPU needs NCCL weight sync back
     assert num_engines == 1 and tensor_parallel_size == 1, "only one colocated TP=1 vLLM engine is supported"
     return [
         LLMRayActor.options(num_cpus=1, num_gpus=num_gpus).remote(
             pretrain,
+            keep_memory=keep_memory,
             trust_remote_code=True,
             dtype="bfloat16",
             gpu_memory_utilization=gpu_memory_utilization,

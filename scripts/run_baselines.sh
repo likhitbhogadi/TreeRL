@@ -2,19 +2,21 @@
 # Unattended baselines on the shared GPU box, at the reduced budget of mid_submission/RL_CHANGES.md:
 #   1. base-model eval   2-4. TreeRL (6,2,1,2), ChainRL (8 chains), GRPO (8 chains), each + eval of its checkpoints
 #   5. 8-sample eval of steps 20/40   6-8. longer TreeRL, ChainRL, GRPO runs (150 steps, lr 5e-6) + their eval
+#   + per-problem 8-sample eval of base and every long-run checkpoint (paired comparisons)
 # Each stage waits for a GPU with enough free memory. Finished stages are skipped, so re-running continues
 # where it stopped. An RL run that dies (e.g. OOM because another user's job grew) or makes no progress for
 # 45 min waits for memory again and resumes from its newest checkpoint (3 tries).
 #   nohup scripts/run_baselines.sh > /tmp/likhit_baselines.log 2>&1 &
 cd "$(dirname "$0")/.." && ROOT=$(pwd)
 source ~/likhit/.venv/bin/activate
-NEED_RL=${NEED_RL:-21000}      # MiB free to start RL: measured peak 18.4 GB (1.5B, VLLM_MEM=0.3) + margin
+NEED_RL=${NEED_RL:-26000}      # MiB free to start RL: measured peak 18.4-21 GB with vLLM sleeping; ~24 GB with KEEP_VLLM=1
 NEED_EVAL=${NEED_EVAL:-14000}  # vLLM at 0.28 x 46 GB
 COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=${STEPS:-40} SAVE_STEPS=10 VLLM_MEM=0.3"
 DATA=$ROOT/mid_submission/data/train_30k_mixed.jsonl
 EVAL_SETS="../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl"
 DONE=$ROOT/ckpt/.done
-mkdir -p $DONE
+PP=results/rl_per_problem  # per-problem eval results (relative to mid_submission/), for paired comparisons
+mkdir -p $DONE mid_submission/$PP
 
 free_gpu() {  # block until some GPU has >= $1 MiB free; print its index
   while true; do
@@ -34,8 +36,9 @@ evaluate() {  # evaluate <model path or id> <name> [solve_rate.py args]: greedy 
   for try in 1 2 3; do
     g=$(free_gpu $NEED_EVAL)
     echo "$(date +%T) eval $2 on GPU $g"
+    rm -f mid_submission/$PP/$2.jsonl
     if (cd mid_submission && CUDA_VISIBLE_DEVICES=$g HF_HUB_OFFLINE=1 python solve_rate.py --model $1 --temperature 0 \
-          --gpu_mem 0.28 --summary $DONE/eval_$2.csv --data $EVAL_SETS "${@:3}" > $DONE/eval_$2.log 2>&1); then
+          --gpu_mem 0.28 --summary $DONE/eval_$2.csv --out $PP/$2.jsonl --data $EVAL_SETS "${@:3}" > $DONE/eval_$2.log 2>&1); then
       tail -n +$([ -f mid_submission/results/rl_eval.csv ] && echo 2 || echo 1) $DONE/eval_$2.csv >> mid_submission/results/rl_eval.csv
       touch $DONE/eval_$2
       sleep 60  # let vLLM free its memory: a new engine's startup profiling fails if free memory changes
@@ -89,14 +92,25 @@ for tag in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8 qwen1.5b-grpo-8; do
   for step in 20 40; do evaluate $ROOT/ckpt/$tag/_actor_global_step$step ${tag}_step${step}_n8 $SAMPLED; done
 done
 
+paired_evals() {  # per-problem 8-sample results of base + every long-run checkpoint (paired CIs in rl_report.py)
+  for m in Qwen/Qwen2.5-Math-1.5B-Instruct $(ls -d $ROOT/ckpt/*-lr5e-6-150/_actor_global_step* 2>/dev/null | sort -V); do
+    if [ "${m#/}" = "$m" ]; then name=base_n8; else name=$(basename $(dirname $m))_$(basename $m)_n8; fi
+    [ -s mid_submission/$PP/$name.jsonl ] || evaluate $m ${name}_pp $SAMPLED
+  done
+}
+paired_evals  # checkpoints that exist already (base, long TreeRL) first: their comparison doesn't wait for the reruns
+
 # Longer runs with a larger step, identical settings for all three methods (40 steps at lr 1.5e-6 did not
-# move greedy accuracy); each run is scored right after it finishes
+# move greedy accuracy); each run is scored right after it finishes. KEEP_VLLM=1: vLLM keeps its memory through
+# training, so other users cannot take it (their jobs grabbing it made earlier attempts fail on vLLM wake-up).
+# The sampling/training settings are unchanged; VLLM_MEM only sets vLLM's KV-cache size.
 for run in "qwen1.5b-treerl-6-2-1-2-lr5e-6-150|6 2 1 2|" "qwen1.5b-chainrl-8-lr5e-6-150|8 0 0 0|" \
            "qwen1.5b-grpo-8-lr5e-6-150|8 0 0 0|ADV=grpo"; do
   IFS='|' read tag tree extra <<< "$run"
-  train $tag "$tree" STEPS=150 LR=5e-6 SAVE_STEPS=50 $extra
+  train $tag "$tree" STEPS=150 LR=5e-6 SAVE_STEPS=50 KEEP_VLLM=1 VLLM_MEM=0.25 $extra
   for c in $(ls -d $ROOT/ckpt/$tag/_actor_global_step* 2>/dev/null | sort -V); do
     evaluate $c ${tag}_$(basename $c)_n8 $SAMPLED
   done
 done
+paired_evals
 echo "$(date +%T) BASELINES_DONE"

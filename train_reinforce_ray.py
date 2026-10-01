@@ -165,6 +165,7 @@ def train(args):
             gpu_memory_utilization=args.vllm_gpu_memory_utilization,
             max_model_len=args.prompt_max_len + args.generate_max_len,
             num_gpus=gpu_frac,
+            keep_memory=args.vllm_keep_memory,
         )
 
     # TODO: use first reward model as critic model
@@ -214,6 +215,8 @@ if __name__ == "__main__":
     )
     parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.35,
                         help="share of the GPU vLLM takes while generating (it sleeps during training)")
+    parser.add_argument("--vllm_keep_memory", action="store_true", default=False,
+                        help="vLLM never sleeps: keeps its memory through training (shared GPUs; peak memory +VLLM share)")
 
     parser.add_argument("--prompt_data", type=str, default=None, nargs="*")
     parser.add_argument(

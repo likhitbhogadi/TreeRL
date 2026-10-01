@@ -19,6 +19,7 @@ STEPS=${STEPS:-100}          # training steps; each step = ROLLOUT prompts x NUM
 ROLLOUT=${ROLLOUT:-16}       # prompts per step (paper: 16)
 NUM_TRACE=${NUM_TRACE:-16}   # leaves per tree used for training (paper: 16 of the 30 EPTree leaves)
 TREE=(${TREE:-6 2 1 2})      # EPTree M N L T; "16 0 0 0" = ChainRL (M i.i.d. chains; needs M >= NUM_TRACE)
+KEEP_VLLM=${KEEP_VLLM:-}        # non-empty: vLLM keeps its GPU memory through training (no sleep; for shared GPUs)
 ADV=${ADV:-treerl}            # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
 MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
 RESUME=${RESUME:-}             # non-empty: resume from the newest $SAVE_DIR/_actor_global_step* (must exist)
@@ -34,7 +35,7 @@ python train_reinforce_ray.py \
     --ref_num_nodes 1 --ref_num_gpus_per_node 1 \
     --reward_num_nodes 0 \
     --vllm_num_engines 1 --vllm_tensor_parallel_size 1 \
-    --vllm_gpu_memory_utilization ${VLLM_MEM:-0.35} --enable_prefix_caching \
+    --vllm_gpu_memory_utilization ${VLLM_MEM:-0.35} --enable_prefix_caching ${KEEP_VLLM:+--vllm_keep_memory} \
     --pretrain ${MODEL:-Qwen/Qwen2.5-Math-1.5B-Instruct} \
     --reward_pretrain ${MODEL:-Qwen/Qwen2.5-Math-1.5B-Instruct} \
     --save_path $SAVE_DIR --ckpt_path $SAVE_DIR --save_steps ${SAVE_STEPS:-20} \

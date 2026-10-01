@@ -94,6 +94,12 @@ Comparing two models **on the same problems** (a paired test) cancels the proble
 | C | Second seed for the three long runs | Measures run-to-run RL variance, which may exceed the method differences | ~8 h | Recommended if B shows an effect |
 | D | Short (40-step) runs | Conclusively flat; more evaluation won't change that | — | **Not needed** |
 
+**Status of A and B (queued 2026-10-01 07:55 server time, after the pipeline instance running long GRPO attempt 3).** `scripts/run_baselines.sh` now:
+- resumes long ChainRL from step 50 (and long GRPO, if needed) with `KEEP_VLLM=1 VLLM_MEM=0.25`, the first option below. A 0.5B smoke step confirmed vLLM no longer sleeps.
+- writes per-problem results for every evaluation (`mid_submission/results/rl_per_problem/`). It first re-scores the base model and long TreeRL's checkpoints, then every new long-run checkpoint. `rl_report.py` turns these into `paired.csv`: each checkpoint minus the base on the same problems, with a 95% bootstrap CI. It was tested on synthetic data (+4.6 points → CI [+4.1, +5.1]).
+
+The options that were considered:
+
 **Before A, make the runs robust to other users.** Two options:
 - **Keep vLLM's memory between rollouts** (no sleep). Peak memory rises from ~19 GB to ~27 GB, but nobody can take vLLM's memory while it sleeps, which caused all the long-run failures so far. A small change: a switch that skips `sleep()`, and a higher `NEED_RL`.
 - **Or checkpoint every 25 steps and allow more attempts.** Less progress is lost per failure, at ~19 GB more disk per run. `/home` has 89 GB free and is 95% full.

@@ -22,7 +22,7 @@ GPU=1 STEPS=100 nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/treerl_rl.log 2>&1 
 ```
 
 - **Outputs:** checkpoints go to `ckpt/<TAG>/_actor_global_step<N>` every `SAVE_STEPS` (20). One line of metrics per step goes to `ckpt/<TAG>/train_log.jsonl`: reward, `pass_at_1` (mean leaf accuracy), `pass_rate` (share of trees with a correct leaf), response length, generate/rollout time, grad norm.
-- **Knobs** (environment variables): `GPU`, `STEPS`, `ROLLOUT` (prompts per step), `NUM_TRACE` (leaves per tree used for training), `TREE` (EPTree `"M N L T"`; `"16 0 0 0"` = ChainRL), `MAX_LEN` (max response tokens), `DATA` (training JSONL), `VLLM_MEM` (share of the GPU vLLM takes while generating), `INFER_BS` (batch of the logprob pass), `MODEL`, `TAG`, `SAVE_DIR`, `SAVE_STEPS`.
+- **Knobs** (environment variables): `GPU`, `STEPS`, `ROLLOUT` (prompts per step), `NUM_TRACE` (leaves per tree used for training), `TREE` (EPTree `"M N L T"`; `"16 0 0 0"` = ChainRL), `MAX_LEN` (max response tokens), `DATA` (training JSONL), `LR`, `RESUME`, `KEEP_VLLM` (non-empty: vLLM keeps its memory through training, see below), `VLLM_MEM` (share of the GPU vLLM takes while generating), `INFER_BS` (batch of the logprob pass), `MODEL`, `TAG`, `SAVE_DIR`, `SAVE_STEPS`.
 
 ## Baselines: data, ChainRL, evaluation
 
@@ -114,6 +114,7 @@ We follow upstream OpenRLHF's later "colocate" design instead.
 | `trainer/ray/vllm_worker_wrap.py` | Old `Worker` subclass replaced by a `worker_extension_cls` with one method. It rebuilds the actor's parameters from CUDA IPC handles and calls `model.load_weights`. There is no copy and no NCCL. |
 | `trainer/ray/reinforce_actor.py` | NCCL process-group setup removed. `_broadcast_to_vllm` now sends `reduce_tensor(param)` IPC handles of all parameters in one call, after waking the engine. ZeRO-1/2 only (under ZeRO-3 the parameters are sharded). |
 | `trainer/ray/launcher_reinforce.py` | Accepts a missing reference-model group. |
+| `--vllm_keep_memory` (`KEEP_VLLM=1`) | vLLM's `sleep()` becomes a no-op: the engine keeps its memory through the logprob pass and training. On a GPU shared with other users, a sleeping engine's freed memory can be taken by their jobs, and the engine then fails on wake-up with `CUDA Error: out of memory`. This killed long ChainRL once and long GRPO twice. Costs `VLLM_MEM` × 46 GB more peak memory during training (~24 GB total at `VLLM_MEM=0.25`); the sampling and training are unchanged. |
 
 **Memory timeline per step:**
 1. vLLM builds the trees (awake).

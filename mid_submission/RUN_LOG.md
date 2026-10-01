@@ -154,6 +154,21 @@ ssh likhit@10.4.25.54 'tail -5 /tmp/likhit_baselines.log; cat ~/likhit/tree_base
 ssh likhit@10.4.25.54 'tail -1 ~/likhit/tree_based_rl/TreeRL_rl/ckpt/*/train_log.jsonl'
 ```
 
+### 2026-10-01: reruns A + B
+
+```bash
+# keep-memory smoke test (0.5B, 1 step): trained, 0 "fall asleep" lines
+GPU=0 STEPS=1 ROLLOUT=2 NUM_TRACE=2 TREE="2 0 0 0" KEEP_VLLM=1 MAX_LEN=512 VLLM_MEM=0.12 INFER_BS=1 SAVE_STEPS=1000 \
+    MODEL=Qwen/Qwen2.5-0.5B-Instruct TAG=keep-smoke SAVE_DIR=/tmp/likhit_qwen_keep_smoke \
+    nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/likhit_keep_smoke.log 2>&1 &
+# updated pipeline queued behind the running instance (PID 1951404, long GRPO attempt 3)
+nohup sh -c "while kill -0 1951404 2>/dev/null; do sleep 60; done; exec scripts/run_baselines.sh" \
+    >> /tmp/likhit_baselines.log 2>&1 &
+# afterwards (laptop): copy results + per-problem files, rebuild tables incl. paired.csv
+scp -q -r likhit@10.4.25.54:likhit/tree_based_rl/TreeRL_rl/mid_submission/results/rl_per_problem mid_submission/results/rl/per_problem
+cd mid_submission && python -m tree_alloc.rl_report results/rl
+```
+
 ## 6. Other one-off checks
 
 ```bash
