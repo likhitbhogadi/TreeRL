@@ -67,7 +67,7 @@ train() {  # train <tag> <"M N L T"> [VAR=value overrides, e.g. STEPS=150 LR=5e-
     ray stop --force > /dev/null 2>&1
     sleep 60
   done
-  echo "$(date +%T) train $1: not finished after 3 tries"
+  [ -f $dir/model.safetensors ] || echo "$(date +%T) train $1: not finished after 3 tries"  # (checked after the last try too)
 }
 
 [ -s $DATA ] || { echo "missing $DATA (run mid_submission/solve_rate.py --keep_mixed first)"; exit 1; }
