@@ -5,11 +5,12 @@
 #   + per-problem 8-sample eval of base and every long-run checkpoint (paired comparisons)
 # Each stage waits for a GPU with enough free memory. Finished stages are skipped, so re-running continues
 # where it stopped. An RL run that dies (e.g. OOM because another user's job grew) or makes no progress for
-# 45 min waits for memory again and resumes from its newest checkpoint (3 tries).
+# 45 min waits for memory again and resumes from its newest checkpoint ($TRIES tries, default 6).
 #   nohup scripts/run_baselines.sh > /tmp/likhit_baselines.log 2>&1 &
 cd "$(dirname "$0")/.." && ROOT=$(pwd)
 source ~/likhit/.venv/bin/activate
-NEED_RL=${NEED_RL:-26000}      # MiB free to start RL: measured peak 18.4-21 GB with vLLM sleeping; ~24 GB with KEEP_VLLM=1
+NEED_RL=${NEED_RL:-30000}      # MiB free to start RL: ~24 GB peak with KEEP_VLLM=1, + margin for other users' jobs growing
+TRIES=${TRIES:-6}             # attempts per training run (most failures are other users' jobs taking memory at startup)
 NEED_EVAL=${NEED_EVAL:-14000}  # vLLM at 0.28 x 46 GB
 COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=${STEPS:-40} SAVE_STEPS=10 VLLM_MEM=0.3"
 DATA=$ROOT/mid_submission/data/train_30k_mixed.jsonl
@@ -50,7 +51,7 @@ evaluate() {  # evaluate <model path or id> <name> [solve_rate.py args]: greedy 
 
 train() {  # train <tag> <"M N L T"> [VAR=value overrides, e.g. STEPS=150 LR=5e-6]
   local dir=$ROOT/ckpt/$1
-  for try in 1 2 3; do
+  for try in $(seq 1 $TRIES); do
     [ -f $dir/model.safetensors ] && return  # the final model is saved at the end of a completed run
     g=$(free_gpu $NEED_RL)
     resume=$(ls -d $dir/_actor_global_step* 2>/dev/null | head -1)
@@ -70,7 +71,7 @@ train() {  # train <tag> <"M N L T"> [VAR=value overrides, e.g. STEPS=150 LR=5e-
     ray stop --force > /dev/null 2>&1
     sleep 60
   done
-  [ -f $dir/model.safetensors ] || echo "$(date +%T) train $1: not finished after 3 tries"  # (checked after the last try too)
+  [ -f $dir/model.safetensors ] || echo "$(date +%T) train $1: not finished after $TRIES tries"  # (checked after the last try too)
 }
 
 [ -s $DATA ] || { echo "missing $DATA (run mid_submission/solve_rate.py --keep_mixed first)"; exit 1; }

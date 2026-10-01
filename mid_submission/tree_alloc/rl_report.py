@@ -7,7 +7,8 @@ Reads eval.csv (rows appended by solve_rate.py --summary), train_logs/<run>.json
   train_curves.csv  one row per (run, step); for a resumed run the last attempt's line for a step wins
   runs.csv          per run: steps logged, peak GPU memory of our processes (MiB)
   paired.csv        if per_problem/*.jsonl exist (solve_rate.py --out): each model's accuracy minus the base model's
-                    on the same problems, with a 95% paired-bootstrap CI over problems (as Task 2's Table 2)
+                    on the same problems, with a 95% paired-bootstrap CI over problems (as Task 2's Table 2);
+                    data=all pools the three benchmarks (1,082 problems)
 """
 from __future__ import annotations
 
@@ -73,14 +74,17 @@ def main(d):
         name = os.path.basename(path)[:-len(".jsonl")].removesuffix("_pp")
         for line in open(path):
             r = json.loads(line)
-            pp.setdefault(name, {}).setdefault(DATA[r["data"]], {})[r["id"]] = r["correct"] / r["n"]
+            bench = pp.setdefault(name, {}).setdefault(DATA[r["data"]], {})
+            # key by position + id: problems are written in file order, and AMC's ids repeat (two contests)
+            bench[f"{len(bench)}:{r['id']}"] = r["correct"] / r["n"]
     if "base_n8" in pp:
         with open(os.path.join(d, "paired.csv"), "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(["model", "data", "problems", "acc", "base_acc", "diff", "ci_lo", "ci_hi"])
             for name in sorted(pp):
-                for bench in ("math500", "amc", "omni"):
-                    a, b = pp[name].get(bench), pp["base_n8"].get(bench)
+                for bench in ("math500", "amc", "omni", "all"):  # all: pooled over the three benchmarks' problems
+                    pool = lambda m: {f"{k}/{i}": v for k, d in pp[m].items() for i, v in d.items()}  # noqa: E731
+                    a, b = (pool(name), pool("base_n8")) if bench == "all" else (pp[name].get(bench), pp["base_n8"].get(bench))
                     if name == "base_n8" or not a or not b:
                         continue
                     bs = paired_bootstrap(a, b)

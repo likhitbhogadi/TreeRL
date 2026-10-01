@@ -54,14 +54,14 @@ def scores():  # (model path or id, n) -> {benchmark: accuracy %}
     return out
 
 
-def paired_diff(name, bench="MATH500"):
+def paired_diff(name, bench=None):  # bench None: all three benchmarks pooled
     """mean accuracy difference vs the base model on the same problems, with a 95% bootstrap CI (points)"""
     def load(n):
         for f in (n, n + "_pp"):
             p = os.path.join(PP, f + ".jsonl")
             if os.path.exists(p):
-                rows = [json.loads(l) for l in open(p) if l.strip()]
-                return {r["id"]: r["correct"] / r["n"] for r in rows if r["data"].startswith(bench)}
+                rows = [r for r in (json.loads(l) for l in open(p) if l.strip()) if (bench is None or r["data"].startswith(bench))]
+                return {f"{r['data']}:{i}": r["correct"] / r["n"] for i, r in enumerate(rows)}  # AMC's ids repeat
     a, b = load(name), load("base_n8")
     if not a or not b:
         return None
@@ -122,7 +122,7 @@ def main():
             name = f"{tag}__actor_global_step{c}_n8"
             s8 = sc.get((os.path.join(CKPT, tag, f"_actor_global_step{c}"), "8"), {})
             pd = paired_diff(name)
-            paired = (f"MATH500 vs base, same problems: {pd[0]:+.1f} [95% CI {pd[1]:+.1f}, {pd[2]:+.1f}]" if pd else
+            paired = (f"vs base, same 1,082 problems: {pd[0]:+.2f} [95% CI {pd[1]:+.2f}, {pd[2]:+.2f}]" if pd else
                       "paired: not yet")
             print(f"      step {c:3d}: 8-sample {fmt(s8) if s8 else 'not scored yet'}   |   {paired}")
 
