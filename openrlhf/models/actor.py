@@ -8,7 +8,7 @@ import torch.nn.functional as F
 # from peft import LoraConfig, TaskType, get_peft_config, get_peft_model
 # from peft.tuners.lora import LoraLayer
 from transformers import AutoModelForCausalLM, PreTrainedModel
-from transformers.deepspeed import HfDeepSpeedConfig
+from transformers.integrations import HfDeepSpeedConfig  # transformers>=5 dropped transformers.deepspeed
 from transformers.models.mixtral.modeling_mixtral import MixtralSparseMoeBlock
 
 from .utils import log_probs_from_logits, replace_rope_embedding

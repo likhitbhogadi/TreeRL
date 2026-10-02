@@ -1,5 +1,6 @@
 import time
 import math
+import random
 from typing import List, Dict, Any, Callable
 import json
 try:
@@ -226,6 +227,12 @@ class EntropyGuidedChainLocalManager:
             # collect all the entropy token indices of the expandable nodes
             expansion_tasks = []
             for tree_idx, tree_list in enumerate(self.tree_lists):
+                if self.args.get("random_fork"):
+                    # ablation (paper Table 2, not in the released code): N uniformly random unmasked tokens per tree
+                    pool = [(tree_idx, node_idx, node, i) for node_idx, node in enumerate(tree_list)
+                            for i, masked in enumerate(node.mask) if not masked]
+                    expansion_tasks.extend(random.sample(pool, min(N, len(pool))))
+                    continue
                 # first get the top-N nodes in each Node
                 tree_entropy_tokens = []
                 for node_idx, node in enumerate(tree_list):

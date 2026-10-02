@@ -504,6 +504,7 @@ def get_remote_reward_entry_mcts(
                 rule_reward = _get_rule_base_reward(query["response"], use_expected_pattern=True, )
                 raw_remote_reward = raw_remote_reward + rule_reward
         results.append(raw_reward)
-    results = torch.tensor(results).float()
+    # right-pad with 0 like the action masks: trees of different prompts have different response widths
+    results = torch.nn.utils.rnn.pad_sequence([torch.tensor(r).float() for r in results], batch_first=True)
     print("reward returned:",results)
     return results

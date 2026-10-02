@@ -1,6 +1,8 @@
 from typing import List
 import math
+import multiprocessing
 import random
+import threading
 import requests
 import json
 import re
@@ -341,6 +343,50 @@ def check_equality(expr1: str, expr2: str, urls):
     return response.lower().strip() == "yes"
 
 
+def _math_verify_equal(pred, label):  # runs in a _math_verify pool worker
+    import math_verify
+
+    gold, ans = math_verify.parse(f"\\boxed{{{label}}}"), math_verify.parse(f"\\boxed{{{pred}}}")
+    return bool(gold and ans and math_verify.verify(gold, ans))
+
+
+_MV_POOL, _MV_LOCK = [None], threading.Lock()
+
+
+def _math_verify(pred, label, timeout=10):
+    """math_verify in a spawned process pool. evaluate_trees grades from threads, where math_verify's
+    signal-based timeout can't work and SymPy can hang forever on some answers; a pool worker, unlike a
+    thread, can be killed. A timeout counts as wrong and replaces the pool."""
+    with _MV_LOCK:
+        if _MV_POOL[0] is None:
+            _MV_POOL[0] = multiprocessing.get_context("spawn").Pool(4)
+        pool = _MV_POOL[0]
+    try:
+        return pool.apply_async(_math_verify_equal, (pred, label)).get(timeout)
+    except Exception:  # timeout or worker crash
+        with _MV_LOCK:
+            if _MV_POOL[0] is pool:
+                pool.terminate()
+                _MV_POOL[0] = None
+        return False
+
+
+def _local_check(response, label):
+    """Grade the last \\boxed{} for runs without judge servers: normalized string match, then math_verify
+    (the string match alone misses 14% of the answers math_verify accepts on our Omni-MATH trees)."""
+    i = response.rfind("\\boxed{")
+    if i < 0:
+        return None, 0
+    depth, j = 0, i + len("\\boxed")
+    for k in range(j, len(response)):
+        depth += {"{": 1, "}": -1}.get(response[k], 0)
+        if depth == 0:
+            break
+    pred = response[j + 1:k]
+    norm = lambda s: re.sub(r"\s+|\$|\\left|\\right|\\!|\\,", "", s).replace("\\dfrac", "\\frac").rstrip(".")  # noqa: E731
+    return pred, int(norm(pred) == norm(label) or _math_verify(pred, label))
+
+
 def check_result(
     question,
     response,
@@ -353,6 +399,8 @@ def check_result(
         if label == "":
             print("dummy label")
         return None, 0
+    if not any(checker_urls or []):  # no LLM judge / extractor servers (RL passes [None] when unset)
+        return _local_check(response, label)
     answer = extract_answer(question, response, extractor_urls)
     if not answer:
         return None, 0
@@ -751,7 +799,6 @@ def query_local_vllm_completions_with_logprobs(
             time.sleep(sleep_time)
     return None, None, None, None, None
 
-
 def query_local_vllm_ids_with_logprobs(
     prompt_token_ids,
     llm,
@@ -784,13 +831,14 @@ def query_local_vllm_ids_with_logprobs(
     for try_counter in range(RETRY_COUNT):
         try:
             # try:
-            if use_ray:
+            if use_ray and hasattr(llm.generate, "remote"):
                 outputs = ray.get(llm.generate.remote(
                     prompt_token_ids=prompt_token_ids, sampling_params=sampling_params))
             else:
-                outputs = llm.generate(
-                    prompt_token_ids=prompt_token_ids, sampling_params=sampling_params
-                )
+                # standalone vllm.LLM (inference-only runs); vLLM>=0.10 dropped the prompt_token_ids= kwarg
+                from vllm.inputs import TokensPrompt
+                outputs = llm.generate([TokensPrompt(prompt_token_ids=p) for p in prompt_token_ids],
+                                       sampling_params, use_tqdm=False)
             # except:
             #     # continue
             #     # print("ray.get error")
@@ -800,7 +848,13 @@ def query_local_vllm_ids_with_logprobs(
             #         )
             #     else:
             #         continue
+            #
 
+            #text	str	The generated text (the continuation only, not the prompt)	yes, content_strs
+            #token_ids	list[int]	The generated token IDs	only for len(...) → token_nums
+            #cumulative_logprob	float	Sum of the logprobs of all generated tokens	no
+            #logprobs	list[dict[int, Logprob]]	One dict per generated token (only filled in when logprobs is set)	yes, this is where the fork scores come from
+            #finish_reason	str	"stop" (hit a stop token) or "length" (hit max_tokens)	yes
             for output in outputs:
                 assert len(output.outputs) == 1
                 out = output.outputs[0]

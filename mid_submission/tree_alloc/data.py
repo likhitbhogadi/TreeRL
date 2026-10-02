@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import ast
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Sequence
 
 Q_KEYS = ("problem", "question", "Question", "text", "prompt")
@@ -17,6 +17,7 @@ class Problem:
     id: str
     question: str
     answer: str
+    raw: dict = field(default_factory=dict, repr=False)  # the original JSON row
 
 
 def _answer(v) -> str:
@@ -44,7 +45,7 @@ def load_problems(path: str, limit: Optional[int] = None, ids: Optional[Sequence
             qk = question_key or next(k for k in Q_KEYS if k in d)
             ak = answer_key or next(k for k in A_KEYS if k in d)
             pid = str(d.get("unique_id", d.get("id", i)))
-            out.append(Problem(pid, d[qk], _answer(d[ak])))
+            out.append(Problem(pid, d[qk], _answer(d[ak]), d))
     if ids is not None:
         keep = set(map(str, ids))
         out = [p for p in out if p.id in keep]

@@ -1,0 +1,3 @@
+method,forks,mean relative position,median relative position,mean surprisal at fork token
+EPTree (B2),88000,0.50,0.51,4.95
+Random (B1),84000,0.54,0.56,0.19

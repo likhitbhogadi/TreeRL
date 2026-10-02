@@ -1,0 +1,228 @@
+% ============================================================================================
+% Replaces the TODO placeholders of Sections 5.1, 5.2 and 6 in the mid-submission report.
+% Needs in the preamble: \usepackage{graphicx} (figures) and \usepackage{booktabs} (tables).
+% Figures: report/figures/*.pdf (python -m tree_alloc.report_figures from mid_submission/).
+% Citation keys: rename hou2025treerl to the key your .bib already uses for TreeRL; the other
+% new entries are in report/extra_refs.bib.
+% ============================================================================================
+
+\subsection{Datasets}
+\label{sec:datasets}
+
+\paragraph{Training problems.}
+For RL we use \texttt{train\_30k}, the 30{,}000-problem file that \citet{hou2025treerl} release with their training script. Each problem comes with a final answer and no reference solution. By source tag, it contains WebInstruct (26\%), NuminaMath (24\%) and its cn\_k12 subset (17\%), Omni-MATH (13\%), and smaller sources.
+
+A tree whose leaves are all correct or all wrong yields zero advantage under tree-based credit, so it contributes no gradient. We therefore filter by difficulty. We sample 3{,}000 problems and let the base model answer each 8 times (temperature 1.0): 42\% are never solved and 10\% always.
+
+We keep the 1{,}432 problems solved 1--7 times out of 8. Our long RL runs use 1{,}200 of them (150 steps $\times$ 8 problems), each seen once.
+
+\paragraph{Inference-only study (Phase I).}
+The EPTree study in Section~\ref{sec:phase1} needs no training data. It uses 500 Omni-MATH problems \citep{gao2024omnimath}, a random sample (seed 0) without any filtering, which is the same construction as the paper's Omni-MATH-500. We chose hard, unfiltered problems because PassRate (at least one correct response) saturates on easier sets: an earlier run on 243 accuracy-filtered OlympiadBench problems reached 95\% PassRate with 16 i.i.d.\ chains, leaving no room to compare samplers. On our Omni-MATH sample the base model solves 26\% of problems with one response and 53\% with 64.
+
+\paragraph{Evaluation benchmarks.}
+We evaluate on three sets, 1{,}082 problems in total:
+\begin{itemize}
+\item MATH500 \citep{hendrycks2021math,lightman2023verify}: 500 problems.
+\item AMC: 83 problems from the AMC~12A/12B contests of 2022 and 2023.
+\item Omni-MATH-500: a random sample (seed 0) of 500 Omni-MATH problems \citep{gao2024omnimath}. We score 499 of them; one prompt exceeds the 1{,}024-token limit.
+\end{itemize}
+
+Omni-MATH-500 overlaps \texttt{train\_30k}: 14 of its problems, and 1 MATH500 problem, are among our 1{,}200 training problems. We report results with these 15 problems removed as well.
+
+\paragraph{Reward and grading.}
+The reward is binary: $1$ if the last \verb|\boxed{}| answer matches the reference under \texttt{math-verify}, else $0$. A response cut off at the length limit counts as wrong.
+
+\subsection{Model and Training}
+\label{sec:training}
+
+\paragraph{Model.}
+All experiments use Qwen2.5-Math-1.5B-Instruct \citep{yang2024qwen25math} with its default chat template. We sample at temperature 1.0 and top-$p$ 0.95. At the paper's temperature of 1.2, this model produced degenerate output in 13\% of samples. Responses are capped at 3{,}072 tokens for the Phase~I study and 2{,}048 for RL; only 1.1\% of the model's responses exceed 2{,}048 tokens.
+
+\paragraph{Training stack.}
+We reuse the TreeRL authors' released implementation unchanged for the learning algorithm itself: EPTree tree construction, tree-derived advantages and the policy-gradient loss. We port its infrastructure to a single 46\,GB GPU:
+\begin{itemize}
+\item the policy (DeepSpeed ZeRO-2, CPU Adam) and the vLLM sampler share the GPU;
+\item updated weights reach vLLM through CUDA IPC instead of NCCL;
+\item the trees of all problems in a step are sampled in one batched vLLM call.
+\end{itemize}
+Peak GPU memory is 18.5--21\,GB, so 1.5B-parameter RL fits comfortably in a 40\,GB budget.
+
+\paragraph{Methods compared.}
+All three methods share the same code path and differ only in how responses are sampled and credited:
+\begin{itemize}
+\item \textbf{TreeRL}: EPTree with $(M,N,L,T)=(6,2,1,2)$, i.e.\ 30 leaves per problem. 8 leaves are trained on, with TreeRL's tree advantages (global plus local value differences, scaled by $1/\sqrt{|\mathcal{L}(v)|}$).
+\item \textbf{ChainRL}: 8 independent chains through the same code. Without branching, the tree advantage reduces to a leave-one-out (RLOO) baseline.
+\item \textbf{GRPO} \citep{shao2024deepseekmath}: the same 8 chains with the group-normalised advantage $(r_i-\bar r)/\mathrm{std}(r)$. The KL penalty is set to $\beta=0$, as for the other two methods.
+\end{itemize}
+Table~\ref{tab:hparams} lists the settings next to the paper's.
+
+\begin{table}[t]
+\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & TreeRL paper & Ours \\
+\midrule
+Policy & 7--14B & Qwen2.5-Math-1.5B \\
+RL steps & $\sim$300 & 40 / 150 \\
+Learning rate & 1.5e-6 & 1.5e-6 / 5e-6 \\
+Problems / step & 16 & 8 \\
+Trained resp./problem & 30 Tree, 16 Chain & 8 \\
+KL $\beta$ & $10^{-4}$ & 0 \\
+Temperature, top-$p$ & 1.2, 0.95 & 1.0, 0.95 \\
+Max response tokens & 8{,}192 & 2{,}048 \\
+Optimiser & ZeRO-3, CPU Adam & ZeRO-2, CPU Adam \\
+\bottomrule
+\end{tabular}
+\caption{RL settings: the TreeRL paper and ours. Each of our steps uses 64 trained responses and one optimiser update.}
+\label{tab:hparams}
+\end{table}
+
+\paragraph{Evaluation protocol.}
+We report greedy accuracy and mean@8, the accuracy averaged over 8 samples per problem at temperature 1.0. Because scoring the same model twice varies by about 0.5 points, models are compared on the same problems with a paired bootstrap: 2{,}000 resamples of problems, 95\% CI.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{Phase I: surprisal-guided exploration}
+\label{sec:phase1}
+
+Phase~I of our method builds the exploratory tree with EPTree's surprisal criterion. We first replicate EPTree as an inference-only study on 500 Omni-MATH problems (Section~\ref{sec:datasets}), using TreeRL's own tree construction code. We compare three samplers:
+\begin{itemize}
+\item EPTree, which forks at the $N$ highest-surprisal tokens (6 tree shapes);
+\item random forking with the same $(M,N,L,T)$, the paper's ablation (4 of the shapes);
+\item i.i.d.\ chains: 64 per problem, from which pass@$k$ is estimated without bias for any $k \le 64$.
+\end{itemize}
+Table~\ref{tab:task2} lists all eleven runs.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/task2_passrate.pdf}
+\caption{Tree sampling vs.\ i.i.d.\ chains on 500 Omni-MATH problems.
+(a,b)~PassRate (at least one correct response) against generated tokens per problem, for EPTree (a) and random forking (b), each against the same i.i.d.\ curve ($k=1,2,\dots,64$ chains). Each point is one $(M,N,L,T)$ run; dotted lines join runs in order of token cost. A point above the i.i.d.\ curve reaches that PassRate with fewer tokens. The shaded band lies beyond 64 chains, where no matched i.i.d.\ comparison exists.
+(c)~Gain of the $(6,2,1,2)$ trees over i.i.d.\ chains at the same token budget, by problem difficulty, with 95\% bootstrap CIs. Difficulty is how many of 32 held-out chains (chains 33--64) solve the problem. The i.i.d.\ reference uses the other 32 chains, so the two are independent.}
+\label{fig:task2-passrate}
+\end{figure*}
+
+\begin{table*}[t]
+\centering\footnotesize
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{@{}llrrrrrrr@{}}
+\toprule
+Sampler & $(M,N,L,T)$ & Leaves & Tokens & PassRate & Gain [95\% CI] & Tokens saved [95\% CI] & Distinct & Mixed (\%) \\
+\midrule
+i.i.d. & $k=4$ & 4 & 2.9k & 35.5 & -- & -- & 2.51 & 18.3 \\
+i.i.d. & $k=8$ & 8 & 5.9k & 40.0 & -- & -- & 3.92 & 25.8 \\
+i.i.d. & $k=16$ & 16 & 11.9k & 44.4 & -- & -- & 6.00 & 32.6 \\
+i.i.d. & $k=32$ & 32 & 23.7k & 48.7 & -- & -- & 9.30 & 38.9 \\
+i.i.d. & $k=64$ & 64 & 47.3k & 53.2 & -- & -- & 14.41 & 45.0 \\
+\midrule
+EPTree & (2,1,1,1) & 4 & 2.3k & 34.6 & $+0.6$ [$-1.3$, $+2.6$] & 9\% [$-21$, $+34$] & 2.32 & 16.6 \\
+EPTree & (2,3,1,1) & 8 & 3.9k & 40.2 & $+2.8$ [$+0.6$, $+5.0$] & 36\% [$+9$, $+55$] & 3.56 & 26.6 \\
+EPTree & (4,1,1,1) & 8 & 4.6k & 39.8 & $+1.4$ [$-0.6$, $+3.5$] & 20\% [$-11$, $+43$] & 3.65 & 24.6 \\
+Random & (4,1,1,1) & 8 & 4.6k & 39.4 & $+1.0$ [$-1.0$, $+3.2$] & 15\% [$-16$, $+41$] & 3.63 & 23.8 \\
+EPTree & (4,3,1,1) & 16 & 8.0k & 43.0 & $+1.1$ [$-0.9$, $+3.2$] & 16\% [$-16$, $+42$] & 5.53 & 31.6 \\
+Random & (4,3,1,1) & 16 & 7.9k & 42.2 & $+0.4$ [$-1.6$, $+2.5$] & 7\% [$-28$, $+32$] & 5.38 & 29.8 \\
+EPTree & (6,2,1,2) & 30 & 14.5k & 48.8 & $+3.2$ [$+1.0$, $+5.3$] & 40\% [$+15$, $+57$] & 8.41 & 39.4 \\
+Random & (6,2,1,2) & 30 & 14.2k & 48.8 & $+3.3$ [$+1.2$, $+5.6$] & 41\% [$+18$, $+60$] & 8.07 & 38.4 \\
+EPTree & (8,4,2,2) & 136 & 52.4k & 56.4 & -- & -- & 21.07 & 48.4 \\
+Random & (8,4,2,2) & 136 & 51.9k & 57.2 & -- & -- & 19.92 & 48.2 \\
+\bottomrule
+\end{tabular}
+\caption{All Phase~I runs on 500 Omni-MATH problems.
+\emph{Tokens}: generated tokens per problem, counted once per shared prefix.
+\emph{Gain}: PassRate minus i.i.d.\ pass@$k$ at the same token budget (interpolated log-linearly in tokens).
+\emph{Tokens saved}: how many fewer tokens the tree uses than i.i.d.\ chains need to reach its PassRate.
+\emph{Distinct}: distinct final answers per problem. \emph{Mixed}: share of problems with at least one correct and one incorrect response.
+$(8,4,2,2)$ exceeds the 64-chain budget, so it has no matched i.i.d.\ comparison.
+EPTree minus Random at the same shape (paired, PassRate points): $+0.4$ [$-2.0$, $+2.8$], $+0.8$ [$-1.6$, $+3.4$], $0.0$ [$-2.4$, $+2.4$], $-0.8$ [$-3.2$, $+1.6$].
+Mean per-response accuracy is 25.7--26.2\% for every tree run, against 25.9\% for a single i.i.d.\ chain.}
+\label{tab:task2}
+\end{table*}
+
+\paragraph{Trees are a cheaper way to search.}
+Every tree run lies on or above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a,b), but the gains are modest. Eight runs can be compared with i.i.d.\ chains at the same token budget; their gain ranges from $+0.4$ to $+3.3$ points and is significant for three of them: EPTree $(2,3,1,1)$ and both $(6,2,1,2)$ runs.
+
+Expressed as cost, those three reach the PassRate of i.i.d.\ chains with 36--41\% fewer tokens. For example, EPTree $(6,2,1,2)$ needs 14.5k tokens per problem where i.i.d.\ chains need 23.9k: a 40\% saving [15\%, 57\%]. For the other five runs the savings are 7--20\% and not significant (Table~\ref{tab:task2}). The two $(8,4,2,2)$ runs exceed the 64-chain budget, so we do not compare them.
+
+The saving does not come from better individual answers: mean per-response accuracy is 25.7--26.2\% for every tree run, the same as a single chain (25.9\%). It comes from sharing prefixes, which makes each additional response cheaper. Trees also give more distinct final answers per token: 8.4 for $(6,2,1,2)$, against about 7.0 for i.i.d.\ chains at the same budget.
+
+\paragraph{The gain comes from hard problems.}
+To see which problems benefit, we split them by how many of 32 held-out i.i.d.\ chains solve them, and compare the trees against the other 32 chains at the same token budget (Figure~\ref{fig:task2-passrate}c). On the 256 problems that no held-out chain solves, the $(6,2,1,2)$ EPTree trees gain $+3.3$ points [$+0.4$, $+6.5$]. On problems solved sometimes, the gain is $+4.3$ [$-2.0$, $+11.1$]; with 119 problems this interval is wide. On problems solved by most chains it is 0, since both samplers are at ceiling. Trees help exactly where independent sampling rarely finds a solution.
+
+\paragraph{Trees produce more learnable groups.}
+In RL, a problem yields a gradient only when its responses include both a correct and an incorrect one. At the same token budget, trees produce such mixed groups more often than i.i.d.\ chains (Table~\ref{tab:task2}, Mixed): 39.4\% vs.\ 34.4\% of problems for $(6,2,1,2)$, and 26.6\% vs.\ 21.4\% for $(2,3,1,1)$. This is a plausible mechanism for TreeRL's advantage over ChainRL in Section~\ref{sec:rl}.
+
+\paragraph{Where to fork matters little for PassRate.}
+At identical $(M,N,L,T)$, entropy-guided and random forking differ by $+0.4$, $+0.8$, $0.0$ and $-0.8$ points, and every paired CI includes zero. The paper's differences ($+2.1$, $+1.0$) lie inside our intervals. In this setting the efficiency gain comes from sharing prefixes, not from choosing the fork point.
+
+Two of the paper's descriptive results replicate. Fork positions are spread across the response (mean relative position 0.50). The most frequent fork tokens are function words and \LaTeX{} delimiters (`` the'', `` \textbackslash('', `` and''); unlike the paper's model, ours never writes ``Wait''.
+
+\paragraph{Surprisal does not predict consequential forks; position does.}
+For credit assignment, the useful forks are those whose branch reaches a different outcome than the parent. Across all 168k forks of the ten tree runs, the share of branches that flip correctness is flat in the surprisal of the token forked at: between 5.6\% and 7.5\% in every surprisal bin, from below 0.01 nats to above 8 nats. It falls steadily with the fork's position instead, from 9.7\% [9.0, 10.5] for forks in the first fifth of a response to 3.4\% [2.9, 3.8] in the last fifth (95\% bootstrap CIs over trees).
+
+Comparing the two samplers directly, EPTree branches change the final answer more often than random branches (46.6\% vs.\ 42.6\%, paired $+4.0$ [$+3.2$, $+4.8$]). They change correctness only slightly more often (7.0\% vs.\ 6.1\%, $+0.9$ [$+0.5$, $+1.3$]). Over 90\% of branches from either sampler reproduce their parent's outcome.
+
+\paragraph{Implications for our method.}
+Surprisal is a reasonable signal for \emph{diversity}: EPTree's branches give more distinct answers. It is a weak signal for \emph{consequentiality}, the property credit assignment needs. This supports our proposal in three ways:
+\begin{itemize}
+\item It confirms the limitation stated in Section~9: surprisal measures local uncertainty, not downstream usefulness.
+\item It motivates Phase~II. Most rollouts spent on surprisal-chosen states produce no counterfactual evidence, so the reserved $k$ rollouts should go where observed outcomes differ.
+\item It suggests position, or the remaining length after a state, as a cheap additional feature for the Phase~II candidate set, which our ablations will test.
+\end{itemize}
+
+\subsection{RL baselines}
+\label{sec:rl}
+
+\paragraph{Short runs.}
+With 40 steps at the paper's learning rate, none of the three methods (TreeRL, ChainRL, GRPO) changes the model measurably. On greedy MATH500, for example, step-40 checkpoints score 74.4--75.4 against the base model's 74.6, and every difference across the three benchmarks is within noise. We therefore ran TreeRL and ChainRL for 150 steps with a higher learning rate ($5{\times}10^{-6}$).
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/rl_results.pdf}
+\caption{RL with Qwen2.5-Math-1.5B-Instruct: 150 steps, 8 problems $\times$ 8 trained responses per step. Accuracy is mean@8 on the same 1{,}082 test problems, with paired bootstrap 95\% CIs.
+(a)~Gain over the base model during training.
+(b)~TreeRL minus ChainRL at step 150, per benchmark and pooled.}
+\label{fig:rl}
+\end{figure*}
+
+\begin{table}[t]
+\centering\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+ & MATH500 & AMC & Omni & Pooled & Mean \\
+\midrule
+Base & 73.95 & 45.03 & 26.68 & 49.93 & 48.55 \\
+ChainRL & 73.83 & 45.78 & 26.33 & 49.77 & 48.65 \\
+TreeRL & \textbf{74.90} & \textbf{48.19} & \textbf{27.20} & \textbf{50.85} & \textbf{50.10} \\
+\midrule
+\multicolumn{6}{@{}l}{TreeRL $-$ ChainRL, pooled: $+1.09$ [$+0.32$, $+1.84$]} \\
+\bottomrule
+\end{tabular}
+\caption{Mean@8 accuracy (\%) at step 150 of the long runs. Pooled: over all 1{,}082 problems. Mean: unweighted mean of the three benchmarks, as the paper reports.}
+\label{tab:rl}
+\end{table}
+
+\paragraph{Long runs.}
+TreeRL and ChainRL are indistinguishable at steps 50 and 100 (Figure~\ref{fig:rl}a). By step 150, TreeRL improves over the base model by $+0.92$ points [$+0.17$, $+1.66$], while ChainRL stays at the base level ($-0.16$ [$-0.85$, $+0.52$]).
+
+Head-to-head on the same problems, TreeRL leads ChainRL by $+1.09$ [$+0.32$, $+1.84$] (Figure~\ref{fig:rl}b, Table~\ref{tab:rl}). It is ahead on every benchmark: MATH500 $+1.07$, AMC $+2.41$, Omni-MATH-500 $+0.88$. Excluding the 15 test problems that overlap the training data gives $+1.04$ [$+0.27$, $+1.79$].
+
+The pattern matches the paper, where both methods track each other early and TreeRL pulls ahead after about 100 of $\sim$300 steps. The size of the gap is close to the paper's for an already strong policy: $+1.3$ for R1-Distill-Qwen-7B.
+
+\paragraph{Caveats.}
+\begin{itemize}
+\item Our budget (150 steps $\times$ 64 responses) is roughly 1/15 of the paper's. The base policy, already tuned for math by its developers, leaves little headroom on MATH-level problems.
+\end{itemize}
+
+\subsection{Summary of findings}
+\label{sec:summary}
+\begin{itemize}
+\item \textbf{Tree sampling is somewhat cheaper than i.i.d.\ sampling.} At the same token budget, tree runs gain $+0.4$ to $+3.3$ points PassRate, significantly for 3 of 8 runs; those three need 36--41\% fewer tokens for the same PassRate. The gain comes from shared prefixes and concentrates on problems that independent sampling rarely solves. Trees also produce more distinct answers and more problems with mixed outcomes.
+\item \textbf{Fork placement does not matter for PassRate.} Entropy-guided forking does no better than random forking at equal tree shape (all paired CIs include zero).
+\item \textbf{Surprisal predicts diversity, not consequence.} The chance that a branch flips correctness is flat in surprisal but falls about 3$\times$ from early to late forks, and over 90\% of branches reproduce their parent's outcome. This directly motivates our Phase~II.
+\item \textbf{TreeRL beats ChainRL in RL, modestly.} With identical settings and budgets, TreeRL improves over ChainRL by $+1.09$ points [$+0.32$, $+1.84$] after 150 steps; the two are indistinguishable earlier. The gap is close to the paper's for an already strong policy.
+\item \textbf{Single-GPU feasibility.} RL on a 1.5B model, with on-policy tree sampling, runs on one 46\,GB GPU at a peak of 18.5--21\,GB.
+\end{itemize}
+

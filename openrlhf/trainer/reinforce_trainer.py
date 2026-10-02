@@ -1,3 +1,4 @@
+import json
 import math
 import os.path
 from abc import ABC
@@ -218,7 +219,7 @@ class ReinforceTrainer(ABC):
                         # sequence = sequences[0]
                         # sequence[sequence >= self.tokenizer.vocab_size] = self.tokenizer.eos_token_id
 
-                        vocab_size = len(self.tokenizer.additional_special_tokens) + self.tokenizer.vocab_size
+                        vocab_size = len(self.tokenizer)  # base + added tokens (transformers>=5 has no additional_special_tokens)
                         sequence = [min(x, vocab_size - 1) for x in sequence]
                         
                         output = self.tokenizer.decode(sequence, skip_special_tokens=False)
@@ -356,21 +357,6 @@ class ReinforceTrainer(ABC):
         
         self.strategy.backward(loss, self.actor, self.actor_optim)
 
-        # grad norm calculation of deepspeed - by lurui
-        # reference https://github.com/deepspeedai/DeepSpeed/issues/5883
-        import deepspeed.utils
-        grad_norm = 0.0
-        for param in self.actor.model.module.parameters():
-            grad_data = deepspeed.utils.safe_get_full_grad(param)
-            # if self.strategy.is_rank_0():
-                # print("grad_data.norm(2): ", grad_data.norm(2))
-            grad_norm += grad_data.norm(2).item() ** 2
-        grad_norm = grad_norm ** 0.5
-        
-        # Print some debug information
-        if self.strategy.is_rank_0():
-            self.strategy.print(f"Debug - Gradient norm: {grad_norm}")
-            
         # ptx loss
         if self.pretrain_dataloader is not None:
             data = next(self.pretrain_dataloader)
@@ -396,6 +382,10 @@ class ReinforceTrainer(ABC):
             self.strategy.backward(self.ptx_coef * loss, self.actor, self.actor_optim)
 
         self.strategy.optimizer_step(self.actor_optim, self.actor, self.actor_scheduler, name="actor")
+        # DeepSpeed's own global grad norm (computed for clipping at each optimizer step). Replaces a
+        # per-micro-batch loop of safe_get_full_grad(p).item() over every parameter: ~300 GPU syncs and
+        # CPU-offload reads per sample, and a partial accumulated gradient between optimizer steps anyway.
+        grad_norm = float(self.actor.model.get_global_grad_norm() or 0.0)
         if self.ema_model:
             self.strategy.moving_average(self.actor, self.ema_model, self.ema_beta, "cpu")
 
@@ -451,6 +441,10 @@ class ReinforceTrainer(ABC):
                     }.items()
                 }
                 self._wandb.log(logs)
+            if self.strategy.is_rank_0():  # also a plain JSONL log, one line per training step
+                os.makedirs(args.save_path, exist_ok=True)
+                with open(os.path.join(args.save_path, "train_log.jsonl"), "a") as f:
+                    f.write(json.dumps({"global_step": global_step, **logs_dict}) + "\n")
 
         # TODO: Add evaluation mechanism for PPO
         if global_step % args.eval_steps == 0:

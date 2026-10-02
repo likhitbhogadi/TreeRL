@@ -28,6 +28,8 @@ def multi_reward_fn(rewards: List[torch.Tensor]):
 
 
 def _validate_args(args):
+    assert args.advantage_estimator != "grpo" or args.l == 0, \
+        "GRPO is defined on a group of independent samples: use --l 0 (no forks), --m = group size"
     actor_world_size = args.actor_num_nodes * args.actor_num_gpus_per_node
 
     assert (
@@ -88,12 +90,17 @@ def train(args):
     #   |actor|critic|actor|critic|actor|critic|actor|critic|
     #   |GPU0 | GPU0 |GPU1 | GPU1 |GPU2 | GPU2 |GPU3 | GPU3 |
 
+    # Single-GPU colocation: actor (DeepSpeed), reference model and the vLLM engine share one GPU, so each
+    # takes a Ray GPU fraction (Ray only schedules; memory is set by vllm_gpu_memory_utilization + sleep mode)
+    assert args.actor_num_nodes * args.actor_num_gpus_per_node == 1, "only the single-GPU colocated setup is ported"
+    gpu_frac = 0.3
+
     actor_model = ReinforceRayActorGroup(
         args.actor_num_nodes,
         args.actor_num_gpus_per_node,
         ActorModelRayActorReinforce,
         pg=pg,
-        num_gpus_per_actor=1,
+        num_gpus_per_actor=gpu_frac,
     )
 
     # if colocated, create placement group for reference and reward model explicitly.
@@ -109,12 +116,13 @@ def train(args):
         pg = placement_group(bundles, strategy="STRICT_SPREAD")
         ray.get(pg.ready())
 
-    ref_model = ReinforceRayActorGroup(
+    # KL coefficient 0 (the paper's setting): the reference model only feeds the KL term, so skip it
+    ref_model = None if args.init_kl_coef == 0 else ReinforceRayActorGroup(
         args.ref_num_nodes,
         args.ref_num_gpus_per_node,
         ReferenceModelRayActor,
         pg=pg,
-        num_gpus_per_actor=1,
+        num_gpus_per_actor=gpu_frac,
     )
 
     # multiple reward models
@@ -136,17 +144,28 @@ def train(args):
 
     # init reference/reward/actor model
     refs = []
-    refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.pretrain))
+    if ref_model is not None:
+        refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.pretrain))
     refs.extend(actor_model.async_init_model_from_pretrained(strategy, args.pretrain))
     if not args.remote_rm_url:
         for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
             refs.extend(reward_model.async_init_model_from_pretrained(strategy, reward_pretrain))
+
+    # Colocated on one GPU: finish loading the actor before vLLM starts. vLLM sizes its KV cache by profiling
+    # free memory at startup, and an actor still loading onto the same GPU makes that fail ("free memory
+    # changed during profiling" / "no available memory for the cache blocks").
+    ray.get(refs)
 
     # init vLLM engine for text generation
     vllm_engines = None
     if args.vllm_num_engines is not None:
         vllm_engines = create_vllm_engines(
             args.vllm_num_engines, args.vllm_tensor_parallel_size, args.pretrain, args.seed,
+            enable_prefix_caching=args.enable_prefix_caching,
+            gpu_memory_utilization=args.vllm_gpu_memory_utilization,
+            max_model_len=args.prompt_max_len + args.generate_max_len,
+            num_gpus=gpu_frac,
+            keep_memory=args.vllm_keep_memory,
         )
 
     # TODO: use first reward model as critic model
@@ -194,6 +213,10 @@ if __name__ == "__main__":
         default=1,
         help="tensor parallel size of vLLM Engine for multi-GPU inference",
     )
+    parser.add_argument("--vllm_gpu_memory_utilization", type=float, default=0.35,
+                        help="share of the GPU vLLM takes while generating (it sleeps during training)")
+    parser.add_argument("--vllm_keep_memory", action="store_true", default=False,
+                        help="vLLM never sleeps: keeps its memory through training (shared GPUs; peak memory +VLLM share)")
 
     parser.add_argument("--prompt_data", type=str, default=None, nargs="*")
     parser.add_argument(
@@ -367,6 +390,9 @@ if __name__ == "__main__":
     parser.add_argument("--overall_norm_style", type=str, default="none")
     parser.add_argument("--l2_logits_loss_coeff", type=float, default=0)
     parser.add_argument("--training_type", type=str, default="math")
+    parser.add_argument("--advantage_estimator", choices=["treerl", "grpo"], default="treerl",
+                        help="treerl: the tree's per-segment values; grpo: (r - mean) / std over each question's "
+                             "group of independent samples (DeepSeekMath), needs --l 0")
  
     args = parser.parse_args()
     train(args)
