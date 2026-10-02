@@ -169,6 +169,19 @@ scp -q -r likhit@10.4.25.54:likhit/tree_based_rl/TreeRL_rl/mid_submission/result
 cd mid_submission && python -m tree_alloc.rl_report results/rl
 ```
 
+### 2026-10-02: disk full, checkpoints moved to /scratch
+
+`/home` (shared) reached 100%. Two steps:
+1. `uv cache clean` freed 2.5 GB.
+2. The short runs' step-10/20/30 checkpoints (9 checkpoints, 26 GB, all already scored) were **moved** to `/scratch` (6.6 TB free, not auto-cleaned), with a symlink left at each old path:
+
+```bash
+A=/scratch/likhit/treerl_ckpt_archive; mkdir -p $A; cd ~/likhit/tree_based_rl/TreeRL_rl/ckpt
+for run in qwen1.5b-treerl-6-2-1-2 qwen1.5b-chainrl-8 qwen1.5b-grpo-8; do for s in 10 20 30; do
+  src=$run/_actor_global_step$s; mkdir -p $A/$run; mv $src $A/$run/ && ln -s $A/$run/_actor_global_step$s $src
+done; done                                  # /home: 3 GB -> 24 GB free
+```
+
 ## 6. Other one-off checks
 
 ```bash
