@@ -1,4 +1,0 @@
-# GPU box only. Core logic + tests need only the Python >=3.9 standard library.
-vllm
-transformers
-math-verify
