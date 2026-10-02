@@ -56,3 +56,12 @@
 13:47:18 train qwen1.5b-grpo-8-lr5e-6-150 (try 3) on GPU 1, resuming
 13:52:21 train qwen1.5b-grpo-8-lr5e-6-150: not finished after 3 tries
 13:52:21 BASELINES_DONE
+17:44:04 train qwen1.5b-chainrl-8-lr5e-6-150 (try 1) on GPU 0, resuming
+18:01:08 train qwen1.5b-chainrl-8-lr5e-6-150 (try 2) on GPU 0, resuming
+18:11:13 train qwen1.5b-chainrl-8-lr5e-6-150 (try 3) on GPU 0, resuming
+06:30:45 eval qwen1.5b-chainrl-8-lr5e-6-150__actor_global_step100_n8_pp on GPU 0
+06:51:12 train qwen1.5b-chainrl-8-lr5e-6-150 (try 1) on GPU 0, resuming
+08:24:33 train qwen1.5b-chainrl-8-lr5e-6-150 (try 2) on GPU 0, resuming
+09:36:49 train qwen1.5b-chainrl-8-lr5e-6-150 (try 3) on GPU 0, resuming
+11:17:13 eval qwen1.5b-chainrl-8-lr5e-6-150__actor_global_step100_n8 on GPU 0
+11:37:16 eval qwen1.5b-chainrl-8-lr5e-6-150__actor_global_step150_n8 on GPU 0

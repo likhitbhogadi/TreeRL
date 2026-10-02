@@ -85,6 +85,29 @@ Comparing two models **on the same problems** (a paired test) cancels the proble
 4. **TreeRL vs. the baselines cannot be decided yet.** Long ChainRL has only step 50 (74.4 / 45.5 / 26.9, similar to TreeRL @50), and long GRPO has no checkpoint yet.
 5. **Compute and memory.** All runs peaked at 18.5–21 GB of GPU memory, so they fit easily in 40 GB. On a GPU without other users, a TreeRL step takes ~1 min, and a ChainRL/GRPO step about half that.
 
+## Main result (2026-10-02): TreeRL vs ChainRL at 150 steps
+
+Both long runs used identical settings: 150 steps, lr 5e-6, 8 prompts × 8 trained answers per step, and the same 1,200 filtered `train_30k` problems. Each checkpoint was scored with 8 samples per problem, compared on the same 1,082 test problems (MATH500 + AMC + Omni-MATH-500); the intervals are 95% paired-bootstrap CIs.
+
+| | vs base model | TreeRL minus ChainRL |
+|---|---|---|
+| step 50 | TreeRL +0.20 [−0.47, +0.85] · ChainRL +0.12 [−0.59, +0.87] | +0.08 [−0.62, +0.76] |
+| step 100 | TreeRL +0.23 [−0.49, +0.97] · ChainRL +0.24 [−0.45, +0.95] | −0.01 [−0.70, +0.67] |
+| **step 150** | **TreeRL +0.92 [+0.17, +1.66]** · ChainRL −0.16 [−0.85, +0.52] | **+1.09 [+0.32, +1.84]** |
+
+TreeRL minus ChainRL at step 150, by benchmark: MATH500 +1.07 [−0.10, +2.20], AMC +2.41 [−0.75, +5.87], Omni +0.88 [−0.13, +1.88]. Without the 15 test problems that overlap the training data: TreeRL − ChainRL **+1.04 [+0.27, +1.79]** (1,067 problems).
+
+**Reading.**
+- The two methods are indistinguishable at steps 50 and 100. TreeRL pulls ahead by step 150, while ChainRL stays at the base model's level. The paper reports the same pattern: the methods are similar early, and TreeRL leads from about step 100 of its ~300.
+- The effect is about +1 point, positive on all three benchmarks, and its interval excludes 0 when pooled.
+
+**Limits.**
+- One training run per method, so run-to-run RL variance is not measured. That needs a second seed.
+- Matched on *trained* answers (8 per prompt): our TreeRL *generates* ~2.4× more tokens than ChainRL. The paper matches on generated tokens instead.
+- The step-150 checkpoint is one of three compared.
+
+GRPO's long run is still training (resumed from step 50); its step-150 result will complete the three-way comparison.
+
 ## Update 2026-10-01 evening: paired results, data overlap, paper protocol
 
 **Paired results** (`paired.csv`, 8 samples per problem, same problems as the base model, pooled over all 1,082 test problems):

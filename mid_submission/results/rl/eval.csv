@@ -92,3 +92,12 @@ Qwen/Qwen2.5-Math-1.5B-Instruct,omni_math_500_seed0.jsonl,499,8,1.0,0.2668,0.410
 /home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-treerl-6-2-1-2-lr5e-6-150/_actor_global_step150,MATH500.jsonl,500,8,1.0,0.7490,0.8980
 /home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-treerl-6-2-1-2-lr5e-6-150/_actor_global_step150,aimo-validation-amc.jsonl,83,8,1.0,0.4819,0.7108
 /home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-treerl-6-2-1-2-lr5e-6-150/_actor_global_step150,omni_math_500_seed0.jsonl,499,8,1.0,0.2720,0.4108
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,MATH500.jsonl,500,8,1.0,0.7405,0.8960
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,aimo-validation-amc.jsonl,83,8,1.0,0.4428,0.7108
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,omni_math_500_seed0.jsonl,499,8,1.0,0.2700,0.4068
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,MATH500.jsonl,500,8,1.0,0.7420,0.8920
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,aimo-validation-amc.jsonl,83,8,1.0,0.4473,0.7349
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step100,omni_math_500_seed0.jsonl,499,8,1.0,0.2700,0.4068
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step150,MATH500.jsonl,500,8,1.0,0.7382,0.8780
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step150,aimo-validation-amc.jsonl,83,8,1.0,0.4578,0.6747
+/home/likhit/likhit/tree_based_rl/TreeRL_rl/ckpt/qwen1.5b-chainrl-8-lr5e-6-150/_actor_global_step150,omni_math_500_seed0.jsonl,499,8,1.0,0.2633,0.4028

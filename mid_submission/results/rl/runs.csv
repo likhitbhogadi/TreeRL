@@ -1,5 +1,5 @@
 run,steps_logged,max_step,log_lines,peak_gpu_mem_mib
-qwen1.5b-chainrl-8-lr5e-6-150,64,64,69,22384
+qwen1.5b-chainrl-8-lr5e-6-150,150,150,262,31046
 qwen1.5b-chainrl-8,40,40,40,21020
 qwen1.5b-grpo-8-lr5e-6-150,91,91,124,24984
 qwen1.5b-grpo-8,40,40,40,18660
