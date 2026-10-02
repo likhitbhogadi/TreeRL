@@ -62,22 +62,56 @@ def kfmt(v, _=None):
 
 
 # ------------------------------------------------------------------------------------------------ Task 2
+DIFF_BINS = [("never solved", 0, 0), ("sometimes", 1, 16), ("mostly solved", 17, 32)]  # solved x/32 by chains 33-64
+
+
+def interp_w(tok_curve, ks, T):
+    """(k_lo, k_hi, weight) to read a curve at token budget T, log-linear in tokens; None outside the range"""
+    lo = max((k for k in ks if tok_curve[k] <= T), default=None)
+    hi = min((k for k in ks if tok_curve[k] >= T), default=None)
+    if lo is None or hi is None:
+        return None
+    w = 0 if lo == hi else (math.log(T) - math.log(tok_curve[lo])) / (math.log(tok_curve[hi]) - math.log(tok_curve[lo]))
+    return lo, hi, w
+
+
 def task2():
-    trees = collections.defaultdict(dict)  # log -> problem -> row
+    trees = collections.defaultdict(dict)  # run -> problem -> row
     for r in csv.DictReader(open(os.path.join(HERE, "results", "csv", "trees.csv"))):
         if r["log"].startswith("task2/"):
             trees[r["log"][6:]][r["problem_id"]] = r
     chains = collections.defaultdict(list)  # problem -> [(node_id, reward, tokens)]
-    forks = collections.defaultdict(lambda: collections.defaultdict(dict))  # log -> problem -> node_id -> row
+    nodes = collections.defaultdict(dict)  # (run, problem) -> node_id -> row
     for r in csv.DictReader(open(os.path.join(HERE, "results", "csv", "nodes.csv"))):
         if r["log"] == "task2/b0_64":
             chains[r["problem_id"]].append((int(r["node_id"]), float(r["reward"]), int(r["new_tokens"])))
         elif r["log"].startswith("task2/b"):
-            forks[r["log"][6:]][r["problem_id"]][int(r["node_id"])] = r
+            nodes[(r["log"][6:], r["problem_id"])][int(r["node_id"])] = r
     pids = sorted(chains)
+    for p in pids:
+        chains[p].sort()
     ks = [1, 2, 4, 8, 16, 32, 64]
-    iid_pass = {k: {p: pass_at_k(64, sum(c[1] > 0 for c in chains[p]), k) for p in pids} for k in ks}
-    iid_tok = {k: sum(sum(t for i, _, t in sorted(chains[p])[:k]) for p in pids) / len(pids) for k in ks}
+    c64 = {p: sum(x[1] > 0 for x in chains[p]) for p in pids}
+    iid_pass = {k: {p: pass_at_k(64, c64[p], k) for p in pids} for k in ks}
+    iid_tok = {k: sum(sum(t for _, _, t in chains[p][:k]) for p in pids) / len(pids) for k in ks}
+    mixed = lambda c, k: 1 - math.comb(c, k) / math.comb(64, k) - math.comb(64 - c, k) / math.comb(64, k)  # noqa: E731
+    iid_mixed = {k: 100 * sum(mixed(c64[p], k) for p in pids) / len(pids) for k in ks}
+    iid_curve = {k: 100 * sum(iid_pass[k].values()) / len(pids) for k in ks}
+
+    def iid_tokens_for(curve_pass, curve_tok, target):  # tokens i.i.d. chains need to reach a PassRate
+        for a, b in zip(ks, ks[1:]):
+            if curve_pass[a] <= target <= curve_pass[b]:
+                f = (target - curve_pass[a]) / (curve_pass[b] - curve_pass[a])
+                return math.exp(math.log(curve_tok[a]) + f * (math.log(curve_tok[b]) - math.log(curve_tok[a])))
+        return None
+
+    # difficulty from chains 33-64, i.i.d. reference from chains 1-32: independent samples, no selection bias
+    c_ref = {p: sum(x[1] > 0 for x in chains[p][:32]) for p in pids}
+    c_diff = {p: sum(x[1] > 0 for x in chains[p][32:]) for p in pids}
+    ks32 = [1, 2, 4, 8, 16, 32]
+    tok32 = {k: iid_tok[k] for k in ks32}
+    rng = random.Random(0)
+    boot_idx = [[rng.randrange(len(pids)) for _ in pids] for _ in range(1000)]
 
     rows = []
     for cfg in CONFIGS:
@@ -89,118 +123,176 @@ def task2():
             passes = {p: float(t[p]["pass_any"]) for p in pids}
             row = {"cfg": cfg, "method": method, "leaves": int(t[pids[0]]["n_leaves"]), "tokens": tok,
                    "pass": 100 * sum(passes.values()) / len(pids),
-                   "distinct": sum(int(t[p]["distinct_answers"]) for p in pids) / len(pids)}
-            lo = max((k for k in ks if iid_tok[k] <= tok), default=None)
-            hi = min((k for k in ks if iid_tok[k] >= tok), default=None)
-            if lo and hi:  # i.i.d. PassRate at the same token budget, log-linear between neighbouring k
-                w = 0 if lo == hi else (math.log(tok) - math.log(iid_tok[lo])) / (math.log(iid_tok[hi]) - math.log(iid_tok[lo]))
-                diffs = [passes[p] - ((1 - w) * iid_pass[lo][p] + w * iid_pass[hi][p]) for p in pids]
-                m, a, b = boot_ci(diffs)
-                row.update(iid=row["pass"] - 100 * m, gain=100 * m, gain_lo=100 * a, gain_hi=100 * b)
+                   "acc": 100 * sum(float(t[p]["acc"]) for p in pids) / len(pids),
+                   "distinct": sum(int(t[p]["distinct_answers"]) for p in pids) / len(pids),
+                   "mixed": 100 * sum(float(t[p]["mixed"]) for p in pids) / len(pids)}
+            iw = interp_w(iid_tok, ks, tok)
+            if iw:  # i.i.d. at the same token budget
+                lo, hi, w = iw
+                m, a, b = boot_ci([passes[p] - ((1 - w) * iid_pass[lo][p] + w * iid_pass[hi][p]) for p in pids])
+                row.update(iid=row["pass"] - 100 * m, gain=100 * m, gain_lo=100 * a, gain_hi=100 * b,
+                           iid_mixed=(1 - w) * iid_mixed[lo] + w * iid_mixed[hi],
+                           iid_distinct=None)
+            need = iid_tokens_for(iid_curve, iid_tok, row["pass"])
+            if need:  # tokens i.i.d. needs for the same PassRate, with a bootstrap CI over problems
+                savings = []
+                for idx in boot_idx:
+                    bp = {k: 100 * sum(iid_pass[k][pids[i]] for i in idx) / len(idx) for k in ks}
+                    bt = {k: sum(sum(x[2] for x in chains[pids[i]][:k]) for i in idx) / len(idx) for k in ks}
+                    tr_pass = 100 * sum(passes[pids[i]] for i in idx) / len(idx)
+                    tr_tok = sum(int(t[pids[i]]["new_tokens"]) for i in idx) / len(idx)
+                    n_ = iid_tokens_for(bp, bt, tr_pass)
+                    if n_:
+                        savings.append(100 * (1 - tr_tok / n_))
+                savings.sort()
+                row.update(iid_tokens=need, saving=100 * (1 - tok / need),
+                           saving_lo=savings[int(0.025 * len(savings))], saving_hi=savings[int(0.975 * len(savings)) - 1])
+            iw32 = interp_w(tok32, ks32, tok)
+            if iw32:  # gain by difficulty: tree vs i.i.d. (chains 1-32) at the same tokens, bins from chains 33-64
+                lo, hi, w = iw32
+                row["by_diff"] = {}
+                for name, a_, b_ in DIFF_BINS:
+                    ps = [p for p in pids if a_ <= c_diff[p] <= b_]
+                    d = [passes[p] - ((1 - w) * pass_at_k(32, c_ref[p], lo) + w * pass_at_k(32, c_ref[p], hi)) for p in ps]
+                    row["by_diff"][name] = (len(ps), *[100 * x for x in boot_ci(d)])
             rows.append(row)
 
-    # fork outcomes: does a branch end in a different final answer / different correctness than its parent?
-    fork = {}
-    for method in ("b2", "b1"):
-        change, flip, sur = collections.defaultdict(list), collections.defaultdict(list), []
-        for cfg in ("4-1-1-1", "4-3-1-1", "6-2-1-2", "8-4-2-2"):  # the four shapes run with both methods
-            for p, nodes in forks[f"{method}_{cfg}"].items():
-                for n in nodes.values():
-                    if n["parent"] == "":
-                        continue
-                    par = nodes[int(n["parent"])]
-                    a = normalize(n["answer"]) if n["answer"] else None
-                    b = normalize(par["answer"]) if par["answer"] else None
-                    change[p].append(float(a != b))
-                    flip[p].append(float(float(n["reward"]) != float(par["reward"])))
-                    if n["fork_surprisal"]:
-                        sur.append(float(n["fork_surprisal"]))
-        fork[method] = {"change": {p: sum(v) / len(v) for p, v in change.items()},
-                        "flip": {p: sum(v) / len(v) for p, v in flip.items()}, "surprisal": sur}
+    # forks: does the branch flip correctness / change its final answer vs its parent? (all ten tree runs)
+    flips = []  # (tree id, surprisal, relative position, flip, answer change, method)
+    for (run, p), nd in nodes.items():
+        for n in nd.values():
+            if n["parent"] == "" or not n["fork_surprisal"]:
+                continue
+            par = nd[int(n["parent"])]
+            a = normalize(n["answer"]) if n["answer"] else None
+            b = normalize(par["answer"]) if par["answer"] else None
+            flips.append((f"{run}/{p}", float(n["fork_surprisal"]), float(n["fork_rel_pos"]),
+                          float(float(n["reward"]) != float(par["reward"])), float(a != b), run[:2]))
 
-    # ---- Figure: PassRate vs tokens, and gain over i.i.d. at matched tokens
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.3, 2.35), gridspec_kw={"width_ratios": [1.05, 1]})
-    ax1.plot([iid_tok[k] for k in ks], [100 * sum(iid_pass[k].values()) / len(pids) for k in ks], color=AQUA, lw=2,
-             marker="o", ms=4, label="i.i.d. chains (pass@$k$)", zorder=2)
-    for k in (4, 16, 64):
-        ax1.annotate(f"$k$={k}", (iid_tok[k], 100 * sum(iid_pass[k].values()) / len(pids)), xytext=(4, -9),
-                     textcoords="offset points", fontsize=6.5, color=INK2)
-    for method, color, marker, name in (("b2", BLUE, "o", "EPTree (entropy forks)"), ("b1", ORANGE, "s", "random forks")):
+    def binned(key_fn, nbins):
+        """per-bin flip / answer-change rates with a 95% bootstrap CI over trees (forks of a tree are clustered)"""
+        per = collections.defaultdict(lambda: [[0, 0, 0] for _ in range(nbins)])
+        for tid, s, pos, f, ch, _ in flips:
+            b = key_fn(s, pos)
+            per[tid][b][0] += 1
+            per[tid][b][1] += f
+            per[tid][b][2] += ch
+        tids = list(per)
+        tot = [[sum(per[t][b][j] for t in tids) for j in range(3)] for b in range(nbins)]
+        r = random.Random(1)
+        boots = []
+        for _ in range(300):
+            sample = [tids[r.randrange(len(tids))] for _ in tids]
+            sums = [[0, 0, 0] for _ in range(nbins)]
+            for t in sample:
+                for b in range(nbins):
+                    for j in range(3):
+                        sums[b][j] += per[t][b][j]
+            boots.append(sums)
+        out = []
+        for b in range(nbins):
+            res = {"n": tot[b][0]}
+            for j, key in ((1, "flip"), (2, "change")):
+                vals = sorted(100 * x[b][j] / x[b][0] for x in boots if x[b][0])
+                res[key] = (100 * tot[b][j] / tot[b][0], vals[int(0.025 * len(vals))], vals[int(0.975 * len(vals)) - 1])
+            out.append(res)
+        return out
+
+    SUR_EDGES = [0, 0.01, 0.1, 0.5, 1.5, 3, 5, 8, 1e9]
+    SUR_LABELS = ["<0.01", "0.01–0.1", "0.1–0.5", "0.5–1.5", "1.5–3", "3–5", "5–8", ">8"]
+    by_sur = binned(lambda s, pos: next(i for i in range(8) if SUR_EDGES[i] <= s < SUR_EDGES[i + 1]), 8)
+    by_pos = binned(lambda s, pos: min(int(pos * 5), 4), 5)
+    method_rates = {}
+    for m in ("b2", "b1"):
+        per = collections.defaultdict(list)
+        for tid, s, pos, f, ch, mm in flips:
+            if mm == m and any(tid.startswith(f"{m}_{c}/") for c in ("4-1-1-1", "4-3-1-1", "6-2-1-2", "8-4-2-2")):
+                per[tid.split("/", 1)[1]].append((f, ch))
+        method_rates[m] = {p: (sum(x[0] for x in v) / len(v), sum(x[1] for x in v) / len(v)) for p, v in per.items()}
+    paired = {}
+    for j, key in ((0, "flip"), (1, "change")):
+        a, b = method_rates["b2"], method_rates["b1"]
+        paired[key] = [100 * x for x in boot_ci([a[p][j] - b[p][j] for p in a if p in b])]
+        paired[key + "_levels"] = (100 * sum(v[j] for v in a.values()) / len(a), 100 * sum(v[j] for v in b.values()) / len(b))
+
+    # ---- Figure 1: cost, who benefits, training signal
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(6.3, 2.3), gridspec_kw={"width_ratios": [1.15, 1, 1]})
+    ax1.plot([iid_tok[k] for k in ks], [iid_curve[k] for k in ks], color=AQUA, lw=2, marker="o", ms=3.5,
+             label="i.i.d. chains", zorder=2)
+    for k in (8, 64):
+        ax1.annotate(f"$k$={k}", (iid_tok[k], iid_curve[k]), xytext=(3, -9), textcoords="offset points", fontsize=6, color=INK2)
+    for method, color, marker, name in (("b2", BLUE, "o", "EPTree"), ("b1", ORANGE, "s", "random forks")):
         pts = [r for r in rows if r["method"] == method]
-        ax1.scatter([r["tokens"] for r in pts], [r["pass"] for r in pts], color=color, marker=marker, s=26,
-                    edgecolors="white", linewidths=0.8, label=name, zorder=3)
+        ax1.scatter([r["tokens"] for r in pts], [r["pass"] for r in pts], color=color, marker=marker, s=22,
+                    edgecolors="white", linewidths=0.7, label=name, zorder=3)
+    r62 = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == "b2")
+    ax1.annotate("", xy=(r62["tokens"], r62["pass"]), xytext=(r62["iid_tokens"], r62["pass"]),
+                 arrowprops=dict(arrowstyle="->", color=INK, lw=0.9))
+    ax1.annotate(f"same PassRate,\n{r62['saving']:.0f}% fewer tokens", (r62["tokens"], r62["pass"]), xytext=(-4, 7),
+                 textcoords="offset points", fontsize=6, color=INK, ha="right")
     ax1.set_xscale("log")
     ax1.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
     ax1.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax1.set_xlabel("generated tokens per problem (log scale)")
+    ax1.set_xlabel("generated tokens per problem")
     ax1.set_ylabel("PassRate (%)")
-    ax1.set_title("(a) PassRate vs. generation budget", loc="left", color=INK)
-    ax1.legend(frameon=False, loc="lower right")
+    ax1.set_title("(a) cost of reaching a PassRate", loc="left", color=INK)
+    ax1.legend(frameon=False, loc="lower right", fontsize=6.3, handlelength=1.2)
 
-    matched = [r for r in rows if "gain" in r]
-    order = [c for c in CONFIGS if any(r["cfg"] == c for r in matched)]
-    for method, color, marker, dx in (("b2", BLUE, "o", -0.13), ("b1", ORANGE, "s", 0.13)):
-        for i, cfg in enumerate(order):
-            r = next((r for r in matched if r["cfg"] == cfg and r["method"] == method), None)
-            if r:
-                ax2.errorbar(i + dx, r["gain"], yerr=[[r["gain"] - r["gain_lo"]], [r["gain_hi"] - r["gain"]]],
-                             fmt=marker, color=color, ms=4.5, capsize=2, lw=1.2, mec="white", mew=0.6)
+    names = [n for n, _, _ in DIFF_BINS]
+    for method, color, marker, dx in (("b2", BLUE, "o", -0.12), ("b1", ORANGE, "s", 0.12)):
+        r = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == method)
+        for i, name in enumerate(names):
+            n, m, a, b = r["by_diff"][name]
+            ax2.errorbar(i + dx, m, yerr=[[m - a], [b - m]], fmt=marker, color=color, ms=4, capsize=2, lw=1.1, mec="white", mew=0.5)
     ax2.axhline(0, color=INK2, lw=0.8)
-    ax2.set_xticks(range(len(order)))
-    ax2.set_xticklabels([f"({c.replace('-', ',')})\n{kfmt(next(r['tokens'] for r in matched if r['cfg'] == c))} tok"
-                         for c in order], fontsize=6.5)
+    nbin = next(r for r in rows if r["cfg"] == "6-2-1-2")["by_diff"]
+    ax2.set_xticks(range(len(DIFF_BINS)))
+    ax2.set_xticklabels([f"{n.split()[0]}\n{lo}–{hi}/32\nn={nbin[n][0]}" if lo != hi else f"{n.split()[0]}\n0/32\nn={nbin[n][0]}"
+                         for n, lo, hi in DIFF_BINS], fontsize=6)
     ax2.set_ylabel("PassRate gain over i.i.d. (points)")
-    ax2.set_title("(b) gain at the same token budget, 95% CI", loc="left", color=INK)
-    ax2.plot([], [], "o", color=BLUE, label="EPTree")
-    ax2.plot([], [], "s", color=ORANGE, label="random forks")
-    ax2.legend(frameon=False, loc="upper left")
+    ax2.set_title("(b) where the gain comes from", loc="left", color=INK)
     ax2.grid(axis="x", visible=False)
-    fig.tight_layout(w_pad=1.5)
+
+    ax3.plot([iid_tok[k] for k in ks if k > 1], [iid_mixed[k] for k in ks if k > 1], color=AQUA, lw=2, marker="o", ms=3.5, zorder=2)
+    for method, color, marker in (("b2", BLUE, "o"), ("b1", ORANGE, "s")):
+        pts = [r for r in rows if r["method"] == method]
+        ax3.scatter([r["tokens"] for r in pts], [r["mixed"] for r in pts], color=color, marker=marker, s=22,
+                    edgecolors="white", linewidths=0.7, zorder=3)
+    ax3.set_xscale("log")
+    ax3.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
+    ax3.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+    ax3.set_xlabel("generated tokens per problem")
+    ax3.set_ylabel("problems with right and wrong (%)")
+    ax3.set_title("(c) learnable groups (RL signal)", loc="left", color=INK)
+    fig.tight_layout(w_pad=1.0)
     save(fig, "task2_passrate")
 
-    # ---- Figure: where EPTree forks, and what a fork changes
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.1, 3.6), gridspec_kw={"height_ratios": [1, 1]})
-    for method, color, name in (("b2", BLUE, "EPTree"), ("b1", ORANGE, "random")):
-        s = sorted(max(x, 1e-4) for x in fork[method]["surprisal"])
-        ax1.plot(s, [(i + 1) / len(s) for i in range(len(s))], color=color, lw=2, label=name)
-    eptree_med = sorted(fork["b2"]["surprisal"])[len(fork["b2"]["surprisal"]) // 2]
-    near0 = sum(x < 1e-3 for x in fork["b1"]["surprisal"]) / len(fork["b1"]["surprisal"])
-    ax1.annotate(f"EPTree\nmedian {eptree_med:.2f} nats", (eptree_med, 0.5), xytext=(-8, 0), textcoords="offset points",
-                 fontsize=6.5, color=INK2, ha="right", va="center")
-    ax1.text(1.6e-4, 0.32, f"random: {100 * near0:.0f}% of forks at\ntokens with $-\\log p$ < 0.001", fontsize=6.5,
-             color=INK2, ha="left", va="center")
-    ax1.set_xscale("log")
-    ax1.set_xlim(1e-4, 30)
-    ax1.set_xlabel(r"surprisal of the token forked at, $-\log p$ (nats, log scale)")
-    ax1.set_ylabel("share of forks")
-    ax1.set_title("(a) EPTree forks at far more surprising tokens", loc="left", color=INK)
-    labels = ["final answer\nchanges", "correctness\nchanges"]
-    for j, key in enumerate(("change", "flip")):
-        for method, color, marker, dx in (("b2", BLUE, "o", -0.12), ("b1", ORANGE, "s", 0.12)):
-            m, a, b = boot_ci(list(fork[method][key].values()))
-            ax2.errorbar(j + dx, 100 * m, yerr=[[100 * (m - a)], [100 * (b - m)]], fmt=marker, color=color, ms=4.5,
-                         capsize=2, lw=1.2, mec="white", mew=0.6)
-            ax2.annotate(f"{100 * m:.1f}%", (j + dx, 100 * m), xytext=(5 if dx > 0 else -5, 0), textcoords="offset points",
-                         fontsize=6.5, color=INK2, va="center", ha="left" if dx > 0 else "right")
-    ax2.set_xticks([0, 1])
-    ax2.set_xticklabels(labels)
-    ax2.set_xlim(-0.6, 1.6)
-    ax2.set_ylim(0, 60)
-    ax2.set_ylabel("share of branches (%)")
-    ax2.set_title("(b) branch vs. its parent, 95% CI", loc="left", color=INK)
-    ax2.plot([], [], "o", color=BLUE, label="EPTree")
-    ax2.plot([], [], "s", color=ORANGE, label="random")
-    ax2.legend(frameon=False, loc="upper right")
-    ax2.grid(axis="x", visible=False)
-    fig.tight_layout(h_pad=1.2)
+    # ---- Figure 2: what makes a fork consequential
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.3, 2.2), gridspec_kw={"width_ratios": [1.5, 1]})
+    for ax, data, labels, xlabel, title in (
+        (ax1, by_sur, SUR_LABELS, r"surprisal of the forked token, $-\log p$ (nats)", "(a) by surprisal at the fork"),
+        (ax2, by_pos, ["0–.2", ".2–.4", ".4–.6", ".6–.8", ".8–1"], "fork position / parent length", "(b) by fork position")):
+        x = range(len(data))
+        for key, color, marker, ls, name in (("flip", INK, "o", "-", "correctness changes"),):
+            m = [d[key][0] for d in data]
+            ax.errorbar(x, m, yerr=[[d[key][0] - d[key][1] for d in data], [d[key][2] - d[key][0] for d in data]],
+                        color=color, marker=marker, ms=3.5, lw=1.4, ls=ls, capsize=1.5, label=name, mec="white", mew=0.5)
+        ax.set_xticks(list(x))
+        ax.set_xticklabels(labels, fontsize=6)
+        ax.set_xlabel(xlabel)
+        ax.set_ylim(0, 12)
+        ax.set_title(title, loc="left", color=INK)
+        ax.grid(axis="x", visible=False)
+    ax1.set_ylabel("branches that flip correctness (%)")
+    for i, d in enumerate(by_sur):
+        ax1.annotate(f"{d['n'] / 1000:.0f}k forks", (i, 0.6), fontsize=5.3, color=INK2, ha="center")
+    for i, d in enumerate(by_pos):
+        ax2.annotate(f"{d['n'] / 1000:.0f}k forks", (i, 0.6), fontsize=5.3, color=INK2, ha="center")
+    fig.tight_layout(w_pad=1.2)
     save(fig, "task2_forks")
 
-    # paired EPTree - random difference in fork outcomes (same problems)
-    paired = {}
-    for key in ("change", "flip"):
-        a, b = fork["b2"][key], fork["b1"][key]
-        paired[key] = [100 * x for x in boot_ci([a[p] - b[p] for p in a if p in b])]
-    return rows, fork, paired
+    iid_rows = [{"k": k, "tokens": iid_tok[k], "pass": iid_curve[k], "mixed": iid_mixed[k]} for k in ks]
+    return rows, iid_rows, by_sur, SUR_LABELS, by_pos, paired
 
 
 # ------------------------------------------------------------------------------------------------ RL
@@ -284,19 +376,26 @@ def rl():
 
 
 def main():
-    rows, fork, paired = task2()
+    rows, iid_rows, by_sur, sur_labels, by_pos, paired = task2()
     print("== Task 2 (500 Omni-MATH problems)")
+    for r in iid_rows:
+        print(f"  iid k={r['k']:2d} tokens {r['tokens']:7.0f} pass {r['pass']:.1f} mixed {r['mixed']:.1f}")
     for r in rows:
-        g = f"  gain {r['gain']:+.1f} [{r['gain_lo']:+.1f}, {r['gain_hi']:+.1f}]  iid {r['iid']:.1f}" if "gain" in r else ""
-        print(f"  {r['method']} {r['cfg']:8s} leaves {r['leaves']:3d} tokens {r['tokens']:7.0f} pass {r['pass']:.1f} distinct {r['distinct']:.2f}{g}")
-    for m in ("b2", "b1"):
-        s = sorted(fork[m]["surprisal"])
-        print(f"  forks {m}: n={len(s)} median surprisal {s[len(s) // 2]:.2f} mean {sum(s) / len(s):.2f}")
+        line = (f"  {r['method']} {r['cfg']:8s} leaves {r['leaves']:3d} tokens {r['tokens']:7.0f} pass {r['pass']:.1f} "
+                f"acc {r['acc']:.1f} distinct {r['distinct']:.2f} mixed {r['mixed']:.1f}")
+        if "gain" in r:
+            line += f" | iid@tok {r['iid']:.1f} gain {r['gain']:+.1f} [{r['gain_lo']:+.1f},{r['gain_hi']:+.1f}] iid mixed {r['iid_mixed']:.1f}"
+        if "saving" in r:
+            line += f" | iid tokens {r['iid_tokens']:.0f} saving {r['saving']:.0f}% [{r['saving_lo']:.0f},{r['saving_hi']:.0f}]"
+        print(line)
+        if "by_diff" in r:
+            print("      by difficulty: " + "  ".join(f"{k} n={v[0]} {v[1]:+.1f} [{v[2]:+.1f},{v[3]:+.1f}]" for k, v in r["by_diff"].items()))
+    for lab, d in zip(sur_labels, by_sur):
+        print(f"  surprisal {lab:9s} n={d['n']:6d} flip {d['flip'][0]:.1f} [{d['flip'][1]:.1f},{d['flip'][2]:.1f}]  change {d['change'][0]:.1f}")
+    for i, d in enumerate(by_pos):
+        print(f"  position q{i} n={d['n']:6d} flip {d['flip'][0]:.1f} [{d['flip'][1]:.1f},{d['flip'][2]:.1f}]  change {d['change'][0]:.1f}")
     for key in ("change", "flip"):
-        for m in ("b2", "b1"):
-            v = boot_ci(list(fork[m][key].values()))
-            print(f"  {key:6s} {m}: {100 * v[0]:.1f} [{100 * v[1]:.1f}, {100 * v[2]:.1f}]")
-        print(f"  {key:6s} EPTree - random (paired): {paired[key][0]:+.1f} [{paired[key][1]:+.1f}, {paired[key][2]:+.1f}]")
+        print(f"  {key}: EPTree {paired[key + '_levels'][0]:.1f} random {paired[key + '_levels'][1]:.1f}  paired {paired[key][0]:+.1f} [{paired[key][1]:+.1f},{paired[key][2]:+.1f}]")
     hh, table, vs_base = rl()
     print("== RL (8 samples per problem)")
     for m, t in table.items():

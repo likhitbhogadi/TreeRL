@@ -87,62 +87,97 @@ We report greedy accuracy and mean@8, the accuracy averaged over 8 samples per p
 \subsection{Phase I: surprisal-guided exploration}
 \label{sec:phase1}
 
-Phase~I of our method builds the exploratory tree with EPTree's surprisal criterion. We first replicate EPTree as an inference-only study on 500 Omni-MATH problems, using TreeRL's own tree construction code. We compare three samplers:
+Phase~I of our method builds the exploratory tree with EPTree's surprisal criterion. We first replicate EPTree as an inference-only study on 500 Omni-MATH problems (Section~\ref{sec:datasets}), using TreeRL's own tree construction code. We compare three samplers:
 \begin{itemize}
-\item EPTree, which forks at the $N$ highest-surprisal tokens;
-\item random forking with the same $(M,N,L,T)$, the paper's ablation;
-\item i.i.d.\ chains, scored with the unbiased pass@$k$ estimator from 64 samples per problem.
+\item EPTree, which forks at the $N$ highest-surprisal tokens (6 tree shapes);
+\item random forking with the same $(M,N,L,T)$, the paper's ablation (4 of the shapes);
+\item i.i.d.\ chains: 64 per problem, from which pass@$k$ is estimated without bias for any $k \le 64$.
 \end{itemize}
+Table~\ref{tab:task2} lists all eleven runs.
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/task2_passrate.pdf}
 \caption{Tree sampling vs.\ i.i.d.\ chains on 500 Omni-MATH problems.
-(a)~PassRate (at least one correct response) against generated tokens.
-(b)~Gain over i.i.d.\ chains at the same token budget, per problem with a 95\% bootstrap CI. The i.i.d.\ PassRate is interpolated log-linearly in tokens between neighbouring $k$. $(8,4,2,2)$ is omitted because it exceeds the 64-chain budget.}
+(a)~PassRate (at least one correct response) against generated tokens. The arrow marks the token cost i.i.d.\ chains need to match the $(6,2,1,2)$ tree.
+(b)~Gain of the $(6,2,1,2)$ trees over i.i.d.\ chains at the same token budget, by problem difficulty, with 95\% bootstrap CIs. Difficulty is how many of 32 held-out chains (chains 33--64) solve the problem. The i.i.d.\ reference uses the other 32 chains, so the two are independent.
+(c)~Share of problems whose responses include both a correct and an incorrect one, i.e.\ a group with a learning signal for RL.}
 \label{fig:task2-passrate}
 \end{figure*}
 
 \begin{table*}[t]
 \centering\footnotesize
-\setlength{\tabcolsep}{4.5pt}
-\begin{tabular}{@{}lrrrrrrr@{}}
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{@{}llrrrrrrr@{}}
 \toprule
-$(M,N,L,T)$ & Leaves & Tokens & EPTree & Random & i.i.d.\ at same tokens & EPTree $-$ i.i.d.\ [95\% CI] & EPTree $-$ Random [95\% CI] \\
+Sampler & $(M,N,L,T)$ & Leaves & Tokens & PassRate & Gain [95\% CI] & Tokens saved [95\% CI] & Distinct & Mixed (\%) \\
 \midrule
-(2,1,1,1) & 4 & 2.3k & 34.6 & -- & 34.0 & $+0.6$ [$-1.3$, $+2.6$] & -- \\
-(2,3,1,1) & 8 & 3.9k & 40.2 & -- & 37.4 & $+2.8$ [$+0.6$, $+5.0$] & -- \\
-(4,1,1,1) & 8 & 4.6k & 39.8 & 39.4 & 38.4 & $+1.4$ [$-0.6$, $+3.5$] & $+0.4$ [$-2.0$, $+2.8$] \\
-(4,3,1,1) & 16 & 8.0k & 43.0 & 42.2 & 41.9 & $+1.1$ [$-0.9$, $+3.2$] & $+0.8$ [$-1.6$, $+3.4$] \\
-(6,2,1,2) & 30 & 14.5k & 48.8 & 48.8 & 45.6 & $+3.2$ [$+1.0$, $+5.3$] & $\phantom{+}0.0$ [$-2.4$, $+2.4$] \\
-(8,4,2,2) & 136 & 52.4k & 56.4 & 57.2 & -- & -- & $-0.8$ [$-3.2$, $+1.6$] \\
+i.i.d. & $k=4$ & 4 & 2.9k & 35.5 & -- & -- & 2.51 & 18.3 \\
+i.i.d. & $k=8$ & 8 & 5.9k & 40.0 & -- & -- & 3.92 & 25.8 \\
+i.i.d. & $k=16$ & 16 & 11.9k & 44.4 & -- & -- & 6.00 & 32.6 \\
+i.i.d. & $k=32$ & 32 & 23.7k & 48.7 & -- & -- & 9.30 & 38.9 \\
+i.i.d. & $k=64$ & 64 & 47.3k & 53.2 & -- & -- & 14.41 & 45.0 \\
+\midrule
+EPTree & (2,1,1,1) & 4 & 2.3k & 34.6 & $+0.6$ [$-1.3$, $+2.6$] & 9\% [$-21$, $+34$] & 2.32 & 16.6 \\
+EPTree & (2,3,1,1) & 8 & 3.9k & 40.2 & $+2.8$ [$+0.6$, $+5.0$] & 36\% [$+9$, $+55$] & 3.56 & 26.6 \\
+EPTree & (4,1,1,1) & 8 & 4.6k & 39.8 & $+1.4$ [$-0.6$, $+3.5$] & 20\% [$-11$, $+43$] & 3.65 & 24.6 \\
+Random & (4,1,1,1) & 8 & 4.6k & 39.4 & $+1.0$ [$-1.0$, $+3.2$] & 15\% [$-16$, $+41$] & 3.63 & 23.8 \\
+EPTree & (4,3,1,1) & 16 & 8.0k & 43.0 & $+1.1$ [$-0.9$, $+3.2$] & 16\% [$-16$, $+42$] & 5.53 & 31.6 \\
+Random & (4,3,1,1) & 16 & 7.9k & 42.2 & $+0.4$ [$-1.6$, $+2.5$] & 7\% [$-28$, $+32$] & 5.38 & 29.8 \\
+EPTree & (6,2,1,2) & 30 & 14.5k & 48.8 & $+3.2$ [$+1.0$, $+5.3$] & 40\% [$+15$, $+57$] & 8.41 & 39.4 \\
+Random & (6,2,1,2) & 30 & 14.2k & 48.8 & $+3.3$ [$+1.2$, $+5.6$] & 41\% [$+18$, $+60$] & 8.07 & 38.4 \\
+EPTree & (8,4,2,2) & 136 & 52.4k & 56.4 & -- & -- & 21.07 & 48.4 \\
+Random & (8,4,2,2) & 136 & 51.9k & 57.2 & -- & -- & 19.92 & 48.2 \\
 \bottomrule
 \end{tabular}
-\caption{PassRate (\%) of tree sampling on 500 Omni-MATH problems. Tokens are generated tokens per problem, counted once per shared prefix. The i.i.d.\ column is pass@$k$ at the same token budget. i.i.d.\ chains reach 44.4\% at 16 chains and 53.2\% at 64.}
+\caption{All Phase~I runs on 500 Omni-MATH problems.
+\emph{Tokens}: generated tokens per problem, counted once per shared prefix.
+\emph{Gain}: PassRate minus i.i.d.\ pass@$k$ at the same token budget (interpolated log-linearly in tokens).
+\emph{Tokens saved}: how many fewer tokens the tree uses than i.i.d.\ chains need to reach its PassRate.
+\emph{Distinct}: distinct final answers per problem. \emph{Mixed}: share of problems with at least one correct and one incorrect response.
+$(8,4,2,2)$ exceeds the 64-chain budget, so it has no matched i.i.d.\ comparison.
+EPTree minus Random at the same shape (paired, PassRate points): $+0.4$ [$-2.0$, $+2.8$], $+0.8$ [$-1.6$, $+3.4$], $0.0$ [$-2.4$, $+2.4$], $-0.8$ [$-3.2$, $+1.6$].
+Mean per-response accuracy is 25.7--26.2\% for every tree run, against 25.9\% for a single i.i.d.\ chain.}
 \label{tab:task2}
 \end{table*}
 
-\paragraph{Trees beat i.i.d.\ sampling at the same cost.}
-Every tree configuration lies above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a). The gain at a matched token budget is $+0.6$ to $+3.3$ points, and significant for $(2,3,1,1)$ and $(6,2,1,2)$ (Figure~\ref{fig:task2-passrate}b, Table~\ref{tab:task2}). This replicates the paper's main inference result.
+\paragraph{Trees are a cheaper way to search.}
+Every tree run lies above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a). Measured as cost, the $(6,2,1,2)$ trees reach the PassRate of i.i.d.\ chains with 40\% fewer tokens [15\%, 57\%]: 14.5k instead of 23.9k per problem. The $(2,3,1,1)$ trees save 36\% [9\%, 55\%]; for the other matched shapes the savings are smaller and not significant (Table~\ref{tab:task2}).
+
+The saving does not come from better individual answers: mean per-response accuracy is 25.7--26.2\% for every tree run, the same as a single chain (25.9\%). It comes from sharing prefixes, which makes each additional response cheaper. Trees also give more distinct final answers per token: 8.4 for $(6,2,1,2)$, against about 7.0 for i.i.d.\ chains at the same budget.
+
+\paragraph{The gain comes from hard problems.}
+To see which problems benefit, we split them by how many of 32 held-out i.i.d.\ chains solve them, and compare the trees against the other 32 chains at the same token budget (Figure~\ref{fig:task2-passrate}b). On the 256 problems that no held-out chain solves, the $(6,2,1,2)$ EPTree trees gain $+3.3$ points [$+0.4$, $+6.5$]. On problems solved sometimes, the gain is $+4.3$ [$-2.0$, $+11.1$]; with 119 problems this interval is wide. On problems solved by most chains it is 0, since both samplers are at ceiling. Trees help exactly where independent sampling rarely finds a solution.
+
+\paragraph{Trees produce more learnable groups.}
+In RL, a problem yields a gradient only when its responses include both a correct and an incorrect one. At the same token budget, trees produce such mixed groups more often than i.i.d.\ chains (Figure~\ref{fig:task2-passrate}c): 39.4\% vs.\ 34.4\% of problems for $(6,2,1,2)$, and 26.6\% vs.\ 21.4\% for $(2,3,1,1)$. This is a plausible mechanism for TreeRL's advantage over ChainRL in Section~\ref{sec:rl}.
 
 \paragraph{Where to fork matters little for PassRate.}
-At identical $(M,N,L,T)$, entropy-guided and random forking differ by $+0.4$, $+0.8$, $0.0$ and $-0.8$ points, and every CI includes zero. The paper's differences ($+2.1$, $+1.0$) lie inside our intervals. In this setting the gain over i.i.d.\ sampling comes mostly from sharing prefixes, not from choosing the fork point.
+At identical $(M,N,L,T)$, entropy-guided and random forking differ by $+0.4$, $+0.8$, $0.0$ and $-0.8$ points, and every paired CI includes zero. The paper's differences ($+2.1$, $+1.0$) lie inside our intervals. In this setting the efficiency gain comes from sharing prefixes, not from choosing the fork point.
 
-\begin{figure}[t]
+Two of the paper's descriptive results replicate. Fork positions are spread across the response (mean relative position 0.50). The most frequent fork tokens are function words and \LaTeX{} delimiters (`` the'', `` \textbackslash('', `` and''); unlike the paper's model, ours never writes ``Wait''.
+
+\begin{figure*}[t]
 \centering
-\includegraphics[width=\columnwidth]{figures/task2_forks.pdf}
-\caption{Fork points of EPTree vs.\ random forking (four tree shapes run with both, 84k forks each).
-(a)~Distribution of the surprisal of the token forked at.
-(b)~Share of branches whose final answer, or whose correctness, differs from their parent's, per problem with a 95\% bootstrap CI.}
+\includegraphics[width=\textwidth]{figures/task2_forks.pdf}
+\caption{How often a branch changes correctness relative to its parent response, over all 168k forks of the ten tree runs (EPTree and random pooled). Error bars are 95\% bootstrap CIs over trees.
+(a)~By the surprisal of the token forked at. Random forks fill the low-surprisal bins, EPTree forks the high ones.
+(b)~By the fork's relative position in the parent response.}
 \label{fig:task2-forks}
-\end{figure}
+\end{figure*}
 
-\paragraph{Surprisal finds uncertain tokens, rarely consequential ones.}
-EPTree does fork where the model is uncertain: the forked token has a median surprisal of 3.56 nats, while 63\% of random forks land on near-certain tokens (Figure~\ref{fig:task2-forks}a). Its branches also end in a different final answer more often than random branches: 46.6\% vs.\ 42.6\%, paired difference $+4.0$ [$+3.2$, $+4.8$].
+\paragraph{Surprisal does not predict consequential forks; position does.}
+For credit assignment, the useful forks are those whose branch reaches a different outcome than the parent. Across all 168k forks, the share of branches that flip correctness is flat in the surprisal of the token forked at, between 5.6\% and 7.5\% from below 0.01 nats to above 8 nats (Figure~\ref{fig:task2-forks}a). It falls steadily with the fork's position instead: from 9.7\% for forks in the first fifth of a response to 3.4\% in the last fifth (Figure~\ref{fig:task2-forks}b).
 
-However, a branch changes correctness, the evidence that credit assignment needs, in only 7.0\% of cases for EPTree and 6.1\% for random forks ($+0.9$ [$+0.5$, $+1.3$]). Over 90\% of rollouts reproduce their parent's outcome. Fork positions are spread across the response (mean relative position 0.50), and the most frequent fork tokens are function words and \LaTeX{} delimiters.
+Comparing the two samplers directly, EPTree branches change the final answer more often than random branches (46.6\% vs.\ 42.6\%, paired $+4.0$ [$+3.2$, $+4.8$]). They change correctness only slightly more often (7.0\% vs.\ 6.1\%, $+0.9$ [$+0.5$, $+1.3$]). Over 90\% of branches from either sampler reproduce their parent's outcome.
 
-This is the gap our method targets. Surprisal is a reasonable exploration signal, but most of a fixed budget spent on it yields no counterfactual evidence. Phase~II therefore spends the reserved $k$ rollouts only on states that are both novel and consequential.
+\paragraph{Implications for our method.}
+Surprisal is a reasonable signal for \emph{diversity}: EPTree's branches give more distinct answers. It is a weak signal for \emph{consequentiality}, the property credit assignment needs. This supports our proposal in three ways:
+\begin{itemize}
+\item It confirms the limitation stated in Section~9: surprisal measures local uncertainty, not downstream usefulness.
+\item It motivates Phase~II. Most rollouts spent on surprisal-chosen states produce no counterfactual evidence, so the reserved $k$ rollouts should go where observed outcomes differ.
+\item It suggests position, or the remaining length after a state, as a cheap additional feature for the Phase~II candidate set, which our ablations will test.
+\end{itemize}
 
 \subsection{RL baselines}
 \label{sec:rl}
@@ -192,3 +227,14 @@ The pattern matches the paper, where both methods track each other early and Tre
 \item Our budget (150 steps $\times$ 64 responses) is roughly 1/15 of the paper's. The base policy, already tuned for math by its developers, leaves little headroom on MATH-level problems.
 \item The GRPO baseline has finished 50 of its 150 steps.
 \end{itemize}
+
+\subsection{Summary of findings}
+\label{sec:summary}
+\begin{itemize}
+\item \textbf{Tree sampling is cheaper than i.i.d.\ sampling.} At the same PassRate, $(6,2,1,2)$ trees use 40\% [15\%, 57\%] fewer tokens. The gain comes from shared prefixes, more distinct answers and more problems with mixed outcomes. It concentrates on problems that independent sampling rarely solves.
+\item \textbf{Fork placement does not matter for PassRate.} Entropy-guided forking does no better than random forking at equal tree shape (all paired CIs include zero).
+\item \textbf{Surprisal predicts diversity, not consequence.} The chance that a branch flips correctness is flat in surprisal but falls about 3$\times$ from early to late forks, and over 90\% of branches reproduce their parent's outcome. This directly motivates our Phase~II.
+\item \textbf{TreeRL beats ChainRL in RL, modestly.} With identical settings and budgets, TreeRL improves over ChainRL by $+1.09$ points [$+0.32$, $+1.84$] after 150 steps; the two are indistinguishable earlier. The gap is close to the paper's for an already strong policy.
+\item \textbf{Single-GPU feasibility.} RL on a 1.5B model, with on-policy tree sampling, runs on one 46\,GB GPU at a peak of 18.5--21\,GB.
+\end{itemize}
+
