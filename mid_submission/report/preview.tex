@@ -1,0 +1,15 @@
+% Local preview only: approximates the ACL two-column layout so figure/table sizes can be checked.
+\documentclass[10pt,twocolumn]{article}
+\usepackage[a4paper,textwidth=16cm,textheight=24.7cm,columnsep=0.6cm]{geometry}  % ACL: 16cm text, 7.7cm columns
+\usepackage{fontspec}\setmainfont{Times New Roman}  % compile with xelatex
+\usepackage{graphicx,booktabs,amsmath,amssymb}
+\usepackage{natbib}
+\setcitestyle{authoryear,round}
+\usepackage[hidelinks]{hyperref}
+\setcounter{section}{4}
+\begin{document}
+\section{Dataset and Experimental Setup}
+\input{experiments}
+\bibliographystyle{plainnat}
+\bibliography{extra_refs}
+\end{document}
