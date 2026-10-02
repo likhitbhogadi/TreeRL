@@ -94,7 +94,7 @@ The script uses the flags of the paper's `scripts/treerl-qw14b.sh`, with these d
 | Max response | 8192 | 3072 (prompt 1024) | the model's context is 4096 |
 | ZeRO | 3 | 2 (+ CPU Adam, as in the paper) | one GPU; ZeRO-3 only helps across GPUs |
 | Judge / extractor / RM servers | LLM judge over HTTP | local `\boxed{}` grading (string match, then math_verify) | no servers |
-| Run length | 2 epochs of 30k prompts | `STEPS` × 16 prompts | time (see below) |
+| Run length | ~300 steps × 16 prompts (paper Fig. 6; its released script allows 2 episodes over 300k samples) | `STEPS` × `ROLLOUT` prompts (our long runs: 150 × 8) | time (see below) |
 
 Unchanged from the paper: EPTree (6,2,1,2), 16 of the 30 leaves per tree, `--process_supervision --use_state_value_reward --use_pure_binary --use_weighted_value sqrt --mask_repeated_samples`, KL 0, lr 1.5e-6, weight decay 0.1, train batch 256 = one optimizer step per rollout, and data `datasets/train/train_30k.jsonl`.
 
@@ -189,7 +189,7 @@ The smoke tests had to fit into the ~11 GB other users left free, which is why t
 
 Scaling from that, the full paper-sized step (16 prompts × 16 leaves = 256 samples) should take ~5–7 min, so 100 steps ≈ 9–12 h. The pre-run estimate was ~8–10 min per step; the measured run is faster.
 
-The paper's schedule (2 epochs over 30k problems) is out of reach on one GPU, so runs use a fixed `STEPS` budget. Everything we compare should use the same budget.
+The paper's RL curves run to ~300 steps of 16 prompts (Fig. 6; its "2 epochs" is the SFT stage). We use a fixed, smaller `STEPS` budget. Everything we compare should use the same budget.
 
 ## Known limitations / next steps
 
