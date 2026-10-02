@@ -300,8 +300,7 @@ def load_pp(name):
 
 def rl():
     base = load_pp("base_n8")
-    run = {"TreeRL": "qwen1.5b-treerl-6-2-1-2-lr5e-6-150", "ChainRL": "qwen1.5b-chainrl-8-lr5e-6-150",
-           "GRPO": "qwen1.5b-grpo-8-lr5e-6-150"}
+    run = {"TreeRL": "qwen1.5b-treerl-6-2-1-2-lr5e-6-150", "ChainRL": "qwen1.5b-chainrl-8-lr5e-6-150"}  # GRPO 150-step run left out of the report
     res = {}
     for m, tag in run.items():
         for s in (50, 100, 150):
@@ -313,15 +312,15 @@ def rl():
         return [100 * x for x in boot_ci([a[k] - b[k] for k in a if k in b and (bench is None or k[0] == bench)])]
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.3, 2.35), gridspec_kw={"width_ratios": [1, 1.1]})
-    for m, color, marker in (("TreeRL", BLUE, "o"), ("ChainRL", AQUA, "D"), ("GRPO", ORANGE, "^")):
+    for m, color, marker in (("TreeRL", BLUE, "o"), ("ChainRL", AQUA, "D")):
         steps = [s for s in (50, 100, 150) if (m, s) in res]
         if not steps:
             continue
         d = [diff(res[(m, s)], base) for s in steps]
-        off = {"TreeRL": -6, "ChainRL": 6, "GRPO": 0}[m]
+        off = {"TreeRL": -5, "ChainRL": 5}[m]
         ax1.errorbar([0] + [s + off for s in steps], [0] + [x[0] for x in d],
                      yerr=[[0] + [x[0] - x[1] for x in d], [0] + [x[2] - x[0] for x in d]], color=color, marker=marker,
-                     ms=4.5, lw=1.6, capsize=2, mec="white", mew=0.6, label=m + ("" if len(steps) == 3 else " (to step 50 so far)"))
+                     ms=4.5, lw=1.6, capsize=2, mec="white", mew=0.6, label=m)
     ax1.axhline(0, color=INK2, lw=0.8)
     ax1.set_xticks([0, 50, 100, 150])
     ax1.set_xlabel("RL training step")

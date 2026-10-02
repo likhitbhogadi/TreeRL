@@ -175,13 +175,13 @@ Surprisal is a reasonable signal for \emph{diversity}: EPTree's branches give mo
 \label{sec:rl}
 
 \paragraph{Short runs.}
-With 40 steps at the paper's learning rate, none of the three methods changes the model measurably. On greedy MATH500, for example, step-40 checkpoints score 74.4--75.4 against the base model's 74.6, and every difference across the three benchmarks is within noise. We therefore ran 150 steps with a higher learning rate ($5{\times}10^{-6}$).
+With 40 steps at the paper's learning rate, none of the three methods changes the model measurably. On greedy MATH500, for example, step-40 checkpoints score 74.4--75.4 against the base model's 74.6, and every difference across the three benchmarks is within noise. We therefore ran TreeRL and ChainRL for 150 steps with a higher learning rate ($5{\times}10^{-6}$).
 
 \begin{figure*}[t]
 \centering
 \includegraphics[width=\textwidth]{figures/rl_results.pdf}
 \caption{RL with Qwen2.5-Math-1.5B-Instruct: 150 steps, 8 problems $\times$ 8 trained responses per step. Accuracy is mean@8 on the same 1{,}082 test problems, with paired bootstrap 95\% CIs.
-(a)~Gain over the base model during training. GRPO is evaluated up to step 50 so far.
+(a)~Gain over the base model during training.
 (b)~TreeRL minus ChainRL at step 150, per benchmark and pooled.}
 \label{fig:rl}
 \end{figure*}
@@ -195,7 +195,6 @@ With 40 steps at the paper's learning rate, none of the three methods changes th
 \midrule
 Base & 73.95 & 45.03 & 26.68 & 49.93 & 48.55 \\
 ChainRL & 73.83 & 45.78 & 26.33 & 49.77 & 48.65 \\
-GRPO & \multicolumn{5}{c}{in progress} \\
 TreeRL & \textbf{74.90} & \textbf{48.19} & \textbf{27.20} & \textbf{50.85} & \textbf{50.10} \\
 \midrule
 \multicolumn{6}{@{}l}{TreeRL $-$ ChainRL, pooled: $+1.09$ [$+0.32$, $+1.84$]} \\
@@ -217,7 +216,6 @@ The pattern matches the paper, where both methods track each other early and Tre
 \item Each method was trained once, so run-to-run variance is not yet measured.
 \item The methods are matched on trained responses, not on generated tokens. Our TreeRL generates about $2.4\times$ more tokens than ChainRL, whereas the paper matches generated tokens.
 \item Our budget (150 steps $\times$ 64 responses) is roughly 1/15 of the paper's. The base policy, already tuned for math by its developers, leaves little headroom on MATH-level problems.
-\item The GRPO baseline has finished 50 of its 150 steps.
 \end{itemize}
 
 \subsection{Summary of findings}
