@@ -99,10 +99,8 @@ Table~\ref{tab:task2} lists all eleven runs.
 \centering
 \includegraphics[width=\textwidth]{figures/task2_passrate.pdf}
 \caption{Tree sampling vs.\ i.i.d.\ chains on 500 Omni-MATH problems.
-Dotted lines connect each sampler's runs in order of token cost. Random forks are hollow squares drawn under the EPTree circles, so pairs with near-identical values stay visible: both $(6,2,1,2)$ runs have a PassRate of 48.8\%. The shaded band lies beyond 64 i.i.d.\ chains, where no matched comparison exists.
-(a)~PassRate (at least one correct response) against generated tokens. The arrow marks the token cost i.i.d.\ chains need to match the $(6,2,1,2)$ EPTree run.
-(b)~Gain of the $(6,2,1,2)$ trees over i.i.d.\ chains at the same token budget, by problem difficulty, with 95\% bootstrap CIs. Difficulty is how many of 32 held-out chains (chains 33--64) solve the problem. The i.i.d.\ reference uses the other 32 chains, so the two are independent.
-(c)~Share of problems whose responses include both a correct and an incorrect one, i.e.\ a group with a learning signal for RL.}
+(a,b)~PassRate (at least one correct response) against generated tokens per problem, for EPTree (a) and random forking (b), each against the same i.i.d.\ curve ($k=1,2,\dots,64$ chains). Each point is one $(M,N,L,T)$ run; dotted lines join runs in order of token cost. A point above the i.i.d.\ curve reaches that PassRate with fewer tokens. The shaded band lies beyond 64 chains, where no matched i.i.d.\ comparison exists.
+(c)~Gain of the $(6,2,1,2)$ trees over i.i.d.\ chains at the same token budget, by problem difficulty, with 95\% bootstrap CIs. Difficulty is how many of 32 held-out chains (chains 33--64) solve the problem. The i.i.d.\ reference uses the other 32 chains, so the two are independent.}
 \label{fig:task2-passrate}
 \end{figure*}
 
@@ -143,17 +141,17 @@ Mean per-response accuracy is 25.7--26.2\% for every tree run, against 25.9\% fo
 \end{table*}
 
 \paragraph{Trees are a cheaper way to search.}
-Every tree run lies on or above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a), but the gains are modest. Eight runs can be compared with i.i.d.\ chains at the same token budget; their gain ranges from $+0.4$ to $+3.3$ points and is significant for three of them: EPTree $(2,3,1,1)$ and both $(6,2,1,2)$ runs.
+Every tree run lies on or above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a,b), but the gains are modest. Eight runs can be compared with i.i.d.\ chains at the same token budget; their gain ranges from $+0.4$ to $+3.3$ points and is significant for three of them: EPTree $(2,3,1,1)$ and both $(6,2,1,2)$ runs.
 
 Expressed as cost, those three reach the PassRate of i.i.d.\ chains with 36--41\% fewer tokens. For example, EPTree $(6,2,1,2)$ needs 14.5k tokens per problem where i.i.d.\ chains need 23.9k: a 40\% saving [15\%, 57\%]. For the other five runs the savings are 7--20\% and not significant (Table~\ref{tab:task2}). The two $(8,4,2,2)$ runs exceed the 64-chain budget, so we do not compare them.
 
 The saving does not come from better individual answers: mean per-response accuracy is 25.7--26.2\% for every tree run, the same as a single chain (25.9\%). It comes from sharing prefixes, which makes each additional response cheaper. Trees also give more distinct final answers per token: 8.4 for $(6,2,1,2)$, against about 7.0 for i.i.d.\ chains at the same budget.
 
 \paragraph{The gain comes from hard problems.}
-To see which problems benefit, we split them by how many of 32 held-out i.i.d.\ chains solve them, and compare the trees against the other 32 chains at the same token budget (Figure~\ref{fig:task2-passrate}b). On the 256 problems that no held-out chain solves, the $(6,2,1,2)$ EPTree trees gain $+3.3$ points [$+0.4$, $+6.5$]. On problems solved sometimes, the gain is $+4.3$ [$-2.0$, $+11.1$]; with 119 problems this interval is wide. On problems solved by most chains it is 0, since both samplers are at ceiling. Trees help exactly where independent sampling rarely finds a solution.
+To see which problems benefit, we split them by how many of 32 held-out i.i.d.\ chains solve them, and compare the trees against the other 32 chains at the same token budget (Figure~\ref{fig:task2-passrate}c). On the 256 problems that no held-out chain solves, the $(6,2,1,2)$ EPTree trees gain $+3.3$ points [$+0.4$, $+6.5$]. On problems solved sometimes, the gain is $+4.3$ [$-2.0$, $+11.1$]; with 119 problems this interval is wide. On problems solved by most chains it is 0, since both samplers are at ceiling. Trees help exactly where independent sampling rarely finds a solution.
 
 \paragraph{Trees produce more learnable groups.}
-In RL, a problem yields a gradient only when its responses include both a correct and an incorrect one. At the same token budget, trees produce such mixed groups more often than i.i.d.\ chains (Figure~\ref{fig:task2-passrate}c): 39.4\% vs.\ 34.4\% of problems for $(6,2,1,2)$, and 26.6\% vs.\ 21.4\% for $(2,3,1,1)$. This is a plausible mechanism for TreeRL's advantage over ChainRL in Section~\ref{sec:rl}.
+In RL, a problem yields a gradient only when its responses include both a correct and an incorrect one. At the same token budget, trees produce such mixed groups more often than i.i.d.\ chains (Table~\ref{tab:task2}, Mixed): 39.4\% vs.\ 34.4\% of problems for $(6,2,1,2)$, and 26.6\% vs.\ 21.4\% for $(2,3,1,1)$. This is a plausible mechanism for TreeRL's advantage over ChainRL in Section~\ref{sec:rl}.
 
 \paragraph{Where to fork matters little for PassRate.}
 At identical $(M,N,L,T)$, entropy-guided and random forking differ by $+0.4$, $+0.8$, $0.0$ and $-0.8$ points, and every paired CI includes zero. The paper's differences ($+2.1$, $+1.0$) lie inside our intervals. In this setting the efficiency gain comes from sharing prefixes, not from choosing the fork point.

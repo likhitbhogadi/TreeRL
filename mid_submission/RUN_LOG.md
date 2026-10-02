@@ -232,3 +232,8 @@ cd mid_submission && python -m tree_alloc.rl_report results/rl      # -> eval_ta
 | `scripts/run_baselines.sh` | Unattended pipeline (waits for memory, retries, resumes, evaluates) |
 | `scripts/check_vllm_weight_sync.py` | Self-check for the CUDA-IPC weight sync |
 | `train_reinforce_ray.py`, `openrlhf/**` | The single-GPU / vLLM 0.30 port and GRPO, see RL_CHANGES.md and GRPO_CHANGES.md |
+
+## 2026-10-02 — disk: archived scored checkpoints
+`/home` had 4.3 GB free with GRPO still writing checkpoints. Moved already-scored checkpoints to
+`/scratch/likhit/treerl_ckpt_archive` and left symlinks at the old paths (long TreeRL steps 50/100/150, long ChainRL 50/100,
+the 40-step runs' step 40). `/home` back to 22 GB free.

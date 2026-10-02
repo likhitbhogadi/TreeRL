@@ -228,56 +228,54 @@ def task2():
         paired[key] = [100 * x for x in boot_ci([a[p][j] - b[p][j] for p in a if p in b])]
         paired[key + "_levels"] = (100 * sum(v[j] for v in a.values()) / len(a), 100 * sum(v[j] for v in b.values()) / len(b))
 
-    # ---- Figure 1: cost, who benefits, training signal
-    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(6.3, 2.3), gridspec_kw={"width_ratios": [1.15, 1, 1]})
-    ax1.plot([iid_tok[k] for k in ks], [iid_curve[k] for k in ks], color=AQUA, lw=1.6, ls=":", marker="o", ms=3.5,
-             label="i.i.d. chains", zorder=2)
-    for k in (8, 64):
-        ax1.annotate(f"$k$={k}", (iid_tok[k], iid_curve[k]), xytext=(3, -9), textcoords="offset points", fontsize=6, color=INK2)
-    tree_markers(ax1, rows, "pass", legend=True)
-    r62 = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == "b2")
-    ax1.annotate("", xy=(r62["tokens"], r62["pass"]), xytext=(r62["iid_tokens"], r62["pass"]),
-                 arrowprops=dict(arrowstyle="->", color=INK, lw=0.9))
-    ax1.annotate(f"(6,2,1,2): same PassRate,\n{r62['saving']:.0f}% fewer tokens", (r62["tokens"], r62["pass"]), xytext=(-6, 6),
-                 textcoords="offset points", fontsize=6, color=INK, ha="right")
-    ax1.set_xscale("log")
-    ax1.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
-    ax1.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax1.set_xlabel("generated tokens per problem")
+    # ---- Figure 1: small multiples (EPTree vs i.i.d., random vs i.i.d.) + gain by difficulty; no overplotting
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(6.3, 2.35), gridspec_kw={"width_ratios": [1, 1, 0.95]})
+    label_off = {  # direct labels: offset (points) per tree shape, chosen so no label hits a marker or the curve
+        "2-1-1-1": (-4, 5, "right"), "2-3-1-1": (-4, 5, "right"), "4-1-1-1": (5, -10, "left"),
+        "4-3-1-1": (-4, 5, "right"), "6-2-1-2": (-4, 6, "right"), "8-4-2-2": (-4, 5, "right")}
+    for ax, method, color, marker, title in ((ax1, "b2", BLUE, "o", "(a) EPTree vs. i.i.d. chains"),
+                                             (ax2, "b1", ORANGE, "s", "(b) random forks vs. i.i.d. chains")):
+        ax.axvspan(iid_tok[64] * 1.04, 75000, color=GRID, alpha=0.7, lw=0, zorder=0)
+        ax.plot([iid_tok[k] for k in ks], [iid_curve[k] for k in ks], color=AQUA, lw=1.6, ls=":", marker="o", ms=3,
+                label="i.i.d. chains", zorder=2)
+        pts = sorted((r for r in rows if r["method"] == method), key=lambda r: r["tokens"])
+        ax.plot([r["tokens"] for r in pts], [r["pass"] for r in pts], color=color, lw=1.4, ls=":", marker=marker, ms=4.2,
+                mec="white", mew=0.6, label="EPTree" if method == "b2" else "random forks", zorder=3)
+        for r in pts:
+            dx, dy, ha = label_off[r["cfg"]]
+            ax.annotate(f"({r['cfg'].replace('-', ',')})", (r["tokens"], r["pass"]), xytext=(dx, dy), textcoords="offset points",
+                        fontsize=5.6, color=INK2, ha=ha)
+        for k in (1, 64):
+            ax.annotate(f"$k$={k}", (iid_tok[k], iid_curve[k]), xytext=(3, -9), textcoords="offset points", fontsize=5.6, color=AQUA)
+        ax.set_xscale("log")
+        ax.set_xlim(600, 75000)
+        ax.set_ylim(24, 60)
+        ax.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
+        ax.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
+        ax.set_xlabel("generated tokens per problem")
+        ax.set_title(title, loc="left", color=INK)
+        ax.legend(frameon=False, loc="upper left", fontsize=6, handlelength=2.2)
+        ax.text(60000, 30, "no i.i.d.\nreference", fontsize=5.3, color=INK2, ha="center", va="center")
     ax1.set_ylabel("PassRate (%)")
-    ax1.set_title("(a) cost of reaching a PassRate", loc="left", color=INK)
-    ax1.legend(frameon=False, loc="lower right", bbox_to_anchor=(0.84, 0.0), fontsize=6.3, handlelength=1.8)
+    ax2.set_yticklabels([])
 
     names = [n for n, _, _ in DIFF_BINS]
-    for method, color, marker, dx in (("b2", BLUE, "o", -0.12), ("b1", ORANGE, "s", 0.12)):
+    for method, color, marker, dx in (("b2", BLUE, "o", -0.13), ("b1", ORANGE, "s", 0.13)):
         r = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == method)
         for i, name in enumerate(names):
-            n, m, a, b = r["by_diff"][name]
-            ax2.errorbar(i + dx, m, yerr=[[m - a], [b - m]], fmt=marker, color=color, ms=4.5 if method == "b1" else 4,
-                         capsize=2, lw=1.1, mec=color if method == "b1" else "white", mew=1.1 if method == "b1" else 0.5,
-                         mfc="none" if method == "b1" else color)
-    ax2.axhline(0, color=INK2, lw=0.8)
+            n, m, a_, b_ = r["by_diff"][name]
+            ax3.errorbar(i + dx, m, yerr=[[m - a_], [b_ - m]], fmt=marker, color=color, ms=4, capsize=2, lw=1.1,
+                         mec="white", mew=0.5, label=("EPTree" if method == "b2" else "random forks") if i == 0 else None)
+    ax3.axhline(0, color=INK2, lw=0.8)
     nbin = next(r for r in rows if r["cfg"] == "6-2-1-2")["by_diff"]
-    ax2.set_xticks(range(len(DIFF_BINS)))
-    ax2.set_xticklabels([f"{n.split()[0]}\n{lo}–{hi}/32\nn={nbin[n][0]}" if lo != hi else f"{n.split()[0]}\n0/32\nn={nbin[n][0]}"
+    ax3.set_xticks(range(len(DIFF_BINS)))
+    ax3.set_xticklabels([f"{n.split()[0]}\n{lo}–{hi}/32\nn={nbin[n][0]}" if lo != hi else f"{n.split()[0]}\n0/32\nn={nbin[n][0]}"
                          for n, lo, hi in DIFF_BINS], fontsize=6)
-    ax2.set_ylabel("PassRate gain over i.i.d. (points)")
-    ax2.set_title("(b) where the gain comes from", loc="left", color=INK)
-    ax2.grid(axis="x", visible=False)
-
-    ax3.plot([iid_tok[k] for k in ks if k > 1], [iid_mixed[k] for k in ks if k > 1], color=AQUA, lw=1.6, ls=":", marker="o", ms=3.5, zorder=2)
-    tree_markers(ax3, rows, "mixed")
-    ax3.set_xscale("log")
-    ax3.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
-    ax3.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
-    ax3.set_xlabel("generated tokens per problem")
-    ax3.set_ylabel("problems with right and wrong (%)")
-    ax3.set_title("(c) learnable groups (RL signal)", loc="left", color=INK)
-    for ax, left in ((ax1, 600), (ax3, 1200)):  # no i.i.d. reference past 64 chains: (8,4,2,2) is not compared
-        ax.set_xlim(left, 75000)
-        ax.axvspan(iid_tok[64] * 1.04, 75000, color=GRID, alpha=0.7, lw=0, zorder=0)
-    ax1.text(61000, 40, "no i.i.d. reference", fontsize=5.5, color=INK2, ha="center", va="center", rotation=90)
-    fig.tight_layout(w_pad=1.0)
+    ax3.set_ylabel("PassRate gain over i.i.d. (points)")
+    ax3.set_title("(c) gain by difficulty, (6,2,1,2)", loc="left", color=INK)
+    ax3.legend(frameon=False, loc="upper left", fontsize=6)
+    ax3.grid(axis="x", visible=False)
+    fig.tight_layout(w_pad=0.6)
     save(fig, "task2_passrate")
 
     iid_rows = [{"k": k, "tokens": iid_tok[k], "pass": iid_curve[k], "mixed": iid_mixed[k]} for k in ks]
@@ -320,7 +318,7 @@ def rl():
         if not steps:
             continue
         d = [diff(res[(m, s)], base) for s in steps]
-        off = {"TreeRL": -3, "ChainRL": 3, "GRPO": 0}[m]
+        off = {"TreeRL": -6, "ChainRL": 6, "GRPO": 0}[m]
         ax1.errorbar([0] + [s + off for s in steps], [0] + [x[0] for x in d],
                      yerr=[[0] + [x[0] - x[1] for x in d], [0] + [x[2] - x[0] for x in d]], color=color, marker=marker,
                      ms=4.5, lw=1.6, capsize=2, mec="white", mew=0.6, label=m + ("" if len(steps) == 3 else " (to step 50 so far)"))
@@ -329,7 +327,8 @@ def rl():
     ax1.set_xlabel("RL training step")
     ax1.set_ylabel("accuracy gain over base (points)")
     ax1.set_title("(a) gain over the base model, 95% CI", loc="left", color=INK)
-    ax1.legend(frameon=False, loc="upper left")
+    ax1.set_ylim(-1.25, 2.6)  # headroom so the legend clears the error bars
+    ax1.legend(frameon=False, loc="upper left", ncol=3, fontsize=6, columnspacing=1.0, handlelength=1.6)
 
     rows = []
     if ("TreeRL", 150) in res and ("ChainRL", 150) in res:
