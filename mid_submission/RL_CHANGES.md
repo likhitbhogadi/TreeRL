@@ -96,7 +96,7 @@ The script uses the flags of the paper's `scripts/treerl-qw14b.sh`, with these d
 | Judge / extractor / RM servers | LLM judge over HTTP | local `\boxed{}` grading (string match, then math_verify) | no servers |
 | Run length | ~300 steps × 16 prompts (paper Fig. 6; its released script allows 2 episodes over 300k samples) | `STEPS` × `ROLLOUT` prompts (our long runs: 150 × 8) | time (see below) |
 
-Unchanged from the paper: EPTree (6,2,1,2), 16 of the 30 leaves per tree, `--process_supervision --use_state_value_reward --use_pure_binary --use_weighted_value sqrt --mask_repeated_samples`, KL 0, lr 1.5e-6, weight decay 0.1, train batch 256 = one optimizer step per rollout, and data `datasets/train/train_30k.jsonl`.
+Unchanged from the paper: EPTree (6,2,1,2), 16 of the 30 leaves per tree, `--process_supervision --use_state_value_reward --use_pure_binary --use_weighted_value sqrt --mask_repeated_samples`, KL 0 (the released `scripts/treerl-qw14b.sh` sets `KL=0.0`; the paper text says β = 1e-4), lr 1.5e-6, weight decay 0.1, train batch 256 = one optimizer step per rollout, and data `datasets/train/train_30k.jsonl`.
 
 ## What changed, file by file
 
@@ -139,7 +139,7 @@ A second speed-up is in `trainer/reinforce_trainer.py`. The trainer computed a l
 
 | File | Change | Why |
 |---|---|---|
-| `experience_maker.py`, `train_reinforce_ray.py` | With `--init_kl_coef 0` there is no reference model; its logprobs are replaced by the actor's (KL = 0). | Paper setting. The reference model only feeds the KL term, so this saves ~3 GB and one forward pass per sample. KL > 0 still works (reference model colocated). |
+| `experience_maker.py`, `train_reinforce_ray.py` | With `--init_kl_coef 0` there is no reference model; its logprobs are replaced by the actor's (KL = 0). | Released-script setting (`KL=0.0` in `scripts/treerl-qw14b.sh`); the paper text says β = 1e-4. The reference model only feeds the KL term, so this saves ~3 GB and one forward pass per sample. KL > 0 still works (reference model colocated). |
 | `experience_maker.py` | `pass_rate` / `pass_at_1` logged per sample. | The released code logged the *last* tree's value for the whole batch (harmless there with 1 prompt per call). |
 | `evaluation.py` | Grading without judge servers: normalized string match, then math_verify in a spawned process pool (10 s timeout, pool replaced on a hang). | On our Task 2 trees the string match alone misses **14.4%** of the answers math_verify accepts (8,532 of 59,179, from `results/csv/nodes.csv`), which would be reward noise. Grading runs in threads, where math_verify's own signal-based timeout can't work and SymPy can hang forever; a pool worker can be killed. |
 | `trainer/reinforce_trainer.py` | Metrics also written to `<save_path>/train_log.jsonl`. | wandb is not installed; this gives one JSON line per step. |
