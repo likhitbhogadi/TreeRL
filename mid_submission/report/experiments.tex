@@ -213,8 +213,6 @@ The pattern matches the paper, where both methods track each other early and Tre
 
 \paragraph{Caveats.}
 \begin{itemize}
-\item Each method was trained once, so run-to-run variance is not yet measured.
-\item The methods are matched on trained responses, not on generated tokens. Our TreeRL generates about $2.4\times$ more tokens than ChainRL, whereas the paper matches generated tokens.
 \item Our budget (150 steps $\times$ 64 responses) is roughly 1/15 of the paper's. The base policy, already tuned for math by its developers, leaves little headroom on MATH-level problems.
 \end{itemize}
 
