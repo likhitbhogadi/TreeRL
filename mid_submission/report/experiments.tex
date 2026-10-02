@@ -16,6 +16,9 @@ A tree whose leaves are all correct or all wrong yields zero advantage under tre
 
 We keep the 1{,}432 problems solved 1--7 times out of 8. Our long RL runs use 1{,}200 of them (150 steps $\times$ 8 problems), each seen once.
 
+\paragraph{Inference-only study (Phase I).}
+The EPTree study in Section~\ref{sec:phase1} needs no training data. It uses 500 Omni-MATH problems \citep{gao2024omnimath}, a random sample (seed 0) without any filtering, which is the same construction as the paper's Omni-MATH-500. We chose hard, unfiltered problems because PassRate (at least one correct response) saturates on easier sets: an earlier run on 243 accuracy-filtered OlympiadBench problems reached 95\% PassRate with 16 i.i.d.\ chains, leaving no room to compare samplers. On our Omni-MATH sample the base model solves 26\% of problems with one response and 53\% with 64.
+
 \paragraph{Evaluation benchmarks.}
 We evaluate on three sets, 1{,}082 problems in total:
 \begin{itemize}
@@ -23,8 +26,6 @@ We evaluate on three sets, 1{,}082 problems in total:
 \item AMC: 83 problems from the AMC~12A/12B contests of 2022 and 2023.
 \item Omni-MATH-500: a random sample (seed 0) of 500 Omni-MATH problems \citep{gao2024omnimath}. We score 499 of them; one prompt exceeds the 1{,}024-token limit.
 \end{itemize}
-
-The Phase~I study (Section~\ref{sec:phase1}) uses the same 500 Omni-MATH problems, unfiltered, because filtered sets saturate PassRate.
 
 Omni-MATH-500 overlaps \texttt{train\_30k}: 14 of its problems, and 1 MATH500 problem, are among our 1{,}200 training problems. We report results with these 15 problems removed as well.
 
