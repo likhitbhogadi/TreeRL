@@ -5,7 +5,7 @@ Content for the TODO placeholders of Sections 5.1, 5.2 and 6 of the report (`../
 | File | Use |
 |---|---|
 | `experiments.tex` | LaTeX for §5.1 Datasets, §5.2 Model and Training, §6 Results (Phase I study + RL baselines) |
-| `figures/*.pdf` | The three figures (vector); `.png` copies for slides |
+| `figures/*.pdf` | The two figures (vector); `.png` copies for slides |
 | `extra_refs.bib` | BibTeX for the new citations (TreeRL, DeepSeekMath/GRPO, MATH, PRM800K, Omni-MATH, Qwen2.5-Math) |
 | `preview.tex`, `preview.pdf` | Local preview in the ACL page size (compile with `xelatex`) |
 
@@ -15,6 +15,4 @@ Content for the TODO placeholders of Sections 5.1, 5.2 and 6 of the report (`../
 3. Replace the TODO text of §5.1, §5.2 and §6 with the corresponding parts of `experiments.tex` (or `\input{experiments}` in place of §5.1 to §6 and delete the old headings).
 4. If your `.bib` already has TreeRL under another key, rename `hou2025treerl` in `experiments.tex`.
 
-**When GRPO finishes:** copy the new per-problem results into `../results/rl/per_problem/`, rerun
-`python -m tree_alloc.report_figures` (from `mid_submission/`) to redraw the figures and print the numbers, then
-replace "in progress" in Table 3 and the GRPO caveat with them.
+To redraw the figures and print the numbers: `python -m tree_alloc.report_figures` from `mid_submission/`.
