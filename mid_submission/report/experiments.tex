@@ -99,7 +99,8 @@ Table~\ref{tab:task2} lists all eleven runs.
 \centering
 \includegraphics[width=\textwidth]{figures/task2_passrate.pdf}
 \caption{Tree sampling vs.\ i.i.d.\ chains on 500 Omni-MATH problems.
-(a)~PassRate (at least one correct response) against generated tokens. The arrow marks the token cost i.i.d.\ chains need to match the $(6,2,1,2)$ tree.
+Dotted lines connect each sampler's runs in order of token cost. Random forks are hollow squares drawn under the EPTree circles, so pairs with near-identical values stay visible: both $(6,2,1,2)$ runs have a PassRate of 48.8\%. The shaded band lies beyond 64 i.i.d.\ chains, where no matched comparison exists.
+(a)~PassRate (at least one correct response) against generated tokens. The arrow marks the token cost i.i.d.\ chains need to match the $(6,2,1,2)$ EPTree run.
 (b)~Gain of the $(6,2,1,2)$ trees over i.i.d.\ chains at the same token budget, by problem difficulty, with 95\% bootstrap CIs. Difficulty is how many of 32 held-out chains (chains 33--64) solve the problem. The i.i.d.\ reference uses the other 32 chains, so the two are independent.
 (c)~Share of problems whose responses include both a correct and an incorrect one, i.e.\ a group with a learning signal for RL.}
 \label{fig:task2-passrate}
@@ -142,7 +143,9 @@ Mean per-response accuracy is 25.7--26.2\% for every tree run, against 25.9\% fo
 \end{table*}
 
 \paragraph{Trees are a cheaper way to search.}
-Every tree run lies above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a). Measured as cost, the $(6,2,1,2)$ trees reach the PassRate of i.i.d.\ chains with 40\% fewer tokens [15\%, 57\%]: 14.5k instead of 23.9k per problem. The $(2,3,1,1)$ trees save 36\% [9\%, 55\%]; for the other matched shapes the savings are smaller and not significant (Table~\ref{tab:task2}).
+Every tree run lies on or above the i.i.d.\ curve (Figure~\ref{fig:task2-passrate}a), but the gains are modest. Eight runs can be compared with i.i.d.\ chains at the same token budget; their gain ranges from $+0.4$ to $+3.3$ points and is significant for three of them: EPTree $(2,3,1,1)$ and both $(6,2,1,2)$ runs.
+
+Expressed as cost, those three reach the PassRate of i.i.d.\ chains with 36--41\% fewer tokens. For example, EPTree $(6,2,1,2)$ needs 14.5k tokens per problem where i.i.d.\ chains need 23.9k: a 40\% saving [15\%, 57\%]. For the other five runs the savings are 7--20\% and not significant (Table~\ref{tab:task2}). The two $(8,4,2,2)$ runs exceed the 64-chain budget, so we do not compare them.
 
 The saving does not come from better individual answers: mean per-response accuracy is 25.7--26.2\% for every tree run, the same as a single chain (25.9\%). It comes from sharing prefixes, which makes each additional response cheaper. Trees also give more distinct final answers per token: 8.4 for $(6,2,1,2)$, against about 7.0 for i.i.d.\ chains at the same budget.
 
@@ -157,17 +160,8 @@ At identical $(M,N,L,T)$, entropy-guided and random forking differ by $+0.4$, $+
 
 Two of the paper's descriptive results replicate. Fork positions are spread across the response (mean relative position 0.50). The most frequent fork tokens are function words and \LaTeX{} delimiters (`` the'', `` \textbackslash('', `` and''); unlike the paper's model, ours never writes ``Wait''.
 
-\begin{figure*}[t]
-\centering
-\includegraphics[width=\textwidth]{figures/task2_forks.pdf}
-\caption{How often a branch changes correctness relative to its parent response, over all 168k forks of the ten tree runs (EPTree and random pooled). Error bars are 95\% bootstrap CIs over trees.
-(a)~By the surprisal of the token forked at. Random forks fill the low-surprisal bins, EPTree forks the high ones.
-(b)~By the fork's relative position in the parent response.}
-\label{fig:task2-forks}
-\end{figure*}
-
 \paragraph{Surprisal does not predict consequential forks; position does.}
-For credit assignment, the useful forks are those whose branch reaches a different outcome than the parent. Across all 168k forks, the share of branches that flip correctness is flat in the surprisal of the token forked at, between 5.6\% and 7.5\% from below 0.01 nats to above 8 nats (Figure~\ref{fig:task2-forks}a). It falls steadily with the fork's position instead: from 9.7\% for forks in the first fifth of a response to 3.4\% in the last fifth (Figure~\ref{fig:task2-forks}b).
+For credit assignment, the useful forks are those whose branch reaches a different outcome than the parent. Across all 168k forks of the ten tree runs, the share of branches that flip correctness is flat in the surprisal of the token forked at: between 5.6\% and 7.5\% in every surprisal bin, from below 0.01 nats to above 8 nats. It falls steadily with the fork's position instead, from 9.7\% [9.0, 10.5] for forks in the first fifth of a response to 3.4\% [2.9, 3.8] in the last fifth (95\% bootstrap CIs over trees).
 
 Comparing the two samplers directly, EPTree branches change the final answer more often than random branches (46.6\% vs.\ 42.6\%, paired $+4.0$ [$+3.2$, $+4.8$]). They change correctness only slightly more often (7.0\% vs.\ 6.1\%, $+0.9$ [$+0.5$, $+1.3$]). Over 90\% of branches from either sampler reproduce their parent's outcome.
 
@@ -231,7 +225,7 @@ The pattern matches the paper, where both methods track each other early and Tre
 \subsection{Summary of findings}
 \label{sec:summary}
 \begin{itemize}
-\item \textbf{Tree sampling is cheaper than i.i.d.\ sampling.} At the same PassRate, $(6,2,1,2)$ trees use 40\% [15\%, 57\%] fewer tokens. The gain comes from shared prefixes, more distinct answers and more problems with mixed outcomes. It concentrates on problems that independent sampling rarely solves.
+\item \textbf{Tree sampling is somewhat cheaper than i.i.d.\ sampling.} At the same token budget, tree runs gain $+0.4$ to $+3.3$ points PassRate, significantly for 3 of 8 runs; those three need 36--41\% fewer tokens for the same PassRate. The gain comes from shared prefixes and concentrates on problems that independent sampling rarely solves. Trees also produce more distinct answers and more problems with mixed outcomes.
 \item \textbf{Fork placement does not matter for PassRate.} Entropy-guided forking does no better than random forking at equal tree shape (all paired CIs include zero).
 \item \textbf{Surprisal predicts diversity, not consequence.} The chance that a branch flips correctness is flat in surprisal but falls about 3$\times$ from early to late forks, and over 90\% of branches reproduce their parent's outcome. This directly motivates our Phase~II.
 \item \textbf{TreeRL beats ChainRL in RL, modestly.} With identical settings and budgets, TreeRL improves over ChainRL by $+1.09$ points [$+0.32$, $+1.84$] after 150 steps; the two are indistinguishable earlier. The gap is close to the paper's for an already strong policy.

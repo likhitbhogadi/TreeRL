@@ -75,6 +75,19 @@ def interp_w(tok_curve, ks, T):
     return lo, hi, w
 
 
+def tree_markers(ax, rows, key, legend=False):
+    """random forks as hollow squares underneath, EPTree as filled circles on top: both stay visible when a pair
+    of runs has (near-)identical values, e.g. both (6,2,1,2) runs have PassRate 48.8"""
+    for method, kw in (("b1", dict(marker="s", s=34, facecolors="none", edgecolors=ORANGE, linewidths=1.2, zorder=3,
+                                    label="random forks")),
+                       ("b2", dict(marker="o", s=16, color=BLUE, edgecolors="white", linewidths=0.4, zorder=4,
+                                   label="EPTree"))):
+        pts = sorted((r for r in rows if r["method"] == method), key=lambda r: r["tokens"])
+        ax.plot([r["tokens"] for r in pts], [r[key] for r in pts], ls=":", lw=1.2, color=kw.get("edgecolors") if method == "b1"
+                else BLUE, zorder=2)
+        ax.scatter([r["tokens"] for r in pts], [r[key] for r in pts], **kw)
+
+
 def task2():
     trees = collections.defaultdict(dict)  # run -> problem -> row
     for r in csv.DictReader(open(os.path.join(HERE, "results", "csv", "trees.csv"))):
@@ -217,18 +230,15 @@ def task2():
 
     # ---- Figure 1: cost, who benefits, training signal
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(6.3, 2.3), gridspec_kw={"width_ratios": [1.15, 1, 1]})
-    ax1.plot([iid_tok[k] for k in ks], [iid_curve[k] for k in ks], color=AQUA, lw=2, marker="o", ms=3.5,
+    ax1.plot([iid_tok[k] for k in ks], [iid_curve[k] for k in ks], color=AQUA, lw=1.6, ls=":", marker="o", ms=3.5,
              label="i.i.d. chains", zorder=2)
     for k in (8, 64):
         ax1.annotate(f"$k$={k}", (iid_tok[k], iid_curve[k]), xytext=(3, -9), textcoords="offset points", fontsize=6, color=INK2)
-    for method, color, marker, name in (("b2", BLUE, "o", "EPTree"), ("b1", ORANGE, "s", "random forks")):
-        pts = [r for r in rows if r["method"] == method]
-        ax1.scatter([r["tokens"] for r in pts], [r["pass"] for r in pts], color=color, marker=marker, s=22,
-                    edgecolors="white", linewidths=0.7, label=name, zorder=3)
+    tree_markers(ax1, rows, "pass", legend=True)
     r62 = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == "b2")
     ax1.annotate("", xy=(r62["tokens"], r62["pass"]), xytext=(r62["iid_tokens"], r62["pass"]),
                  arrowprops=dict(arrowstyle="->", color=INK, lw=0.9))
-    ax1.annotate(f"same PassRate,\n{r62['saving']:.0f}% fewer tokens", (r62["tokens"], r62["pass"]), xytext=(-4, 7),
+    ax1.annotate(f"(6,2,1,2): same PassRate,\n{r62['saving']:.0f}% fewer tokens", (r62["tokens"], r62["pass"]), xytext=(-6, 6),
                  textcoords="offset points", fontsize=6, color=INK, ha="right")
     ax1.set_xscale("log")
     ax1.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
@@ -236,14 +246,16 @@ def task2():
     ax1.set_xlabel("generated tokens per problem")
     ax1.set_ylabel("PassRate (%)")
     ax1.set_title("(a) cost of reaching a PassRate", loc="left", color=INK)
-    ax1.legend(frameon=False, loc="lower right", fontsize=6.3, handlelength=1.2)
+    ax1.legend(frameon=False, loc="lower right", bbox_to_anchor=(0.84, 0.0), fontsize=6.3, handlelength=1.8)
 
     names = [n for n, _, _ in DIFF_BINS]
     for method, color, marker, dx in (("b2", BLUE, "o", -0.12), ("b1", ORANGE, "s", 0.12)):
         r = next(r for r in rows if r["cfg"] == "6-2-1-2" and r["method"] == method)
         for i, name in enumerate(names):
             n, m, a, b = r["by_diff"][name]
-            ax2.errorbar(i + dx, m, yerr=[[m - a], [b - m]], fmt=marker, color=color, ms=4, capsize=2, lw=1.1, mec="white", mew=0.5)
+            ax2.errorbar(i + dx, m, yerr=[[m - a], [b - m]], fmt=marker, color=color, ms=4.5 if method == "b1" else 4,
+                         capsize=2, lw=1.1, mec=color if method == "b1" else "white", mew=1.1 if method == "b1" else 0.5,
+                         mfc="none" if method == "b1" else color)
     ax2.axhline(0, color=INK2, lw=0.8)
     nbin = next(r for r in rows if r["cfg"] == "6-2-1-2")["by_diff"]
     ax2.set_xticks(range(len(DIFF_BINS)))
@@ -253,43 +265,20 @@ def task2():
     ax2.set_title("(b) where the gain comes from", loc="left", color=INK)
     ax2.grid(axis="x", visible=False)
 
-    ax3.plot([iid_tok[k] for k in ks if k > 1], [iid_mixed[k] for k in ks if k > 1], color=AQUA, lw=2, marker="o", ms=3.5, zorder=2)
-    for method, color, marker in (("b2", BLUE, "o"), ("b1", ORANGE, "s")):
-        pts = [r for r in rows if r["method"] == method]
-        ax3.scatter([r["tokens"] for r in pts], [r["mixed"] for r in pts], color=color, marker=marker, s=22,
-                    edgecolors="white", linewidths=0.7, zorder=3)
+    ax3.plot([iid_tok[k] for k in ks if k > 1], [iid_mixed[k] for k in ks if k > 1], color=AQUA, lw=1.6, ls=":", marker="o", ms=3.5, zorder=2)
+    tree_markers(ax3, rows, "mixed")
     ax3.set_xscale("log")
     ax3.xaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(kfmt))
     ax3.xaxis.set_minor_formatter(matplotlib.ticker.NullFormatter())
     ax3.set_xlabel("generated tokens per problem")
     ax3.set_ylabel("problems with right and wrong (%)")
     ax3.set_title("(c) learnable groups (RL signal)", loc="left", color=INK)
+    for ax, left in ((ax1, 600), (ax3, 1200)):  # no i.i.d. reference past 64 chains: (8,4,2,2) is not compared
+        ax.set_xlim(left, 75000)
+        ax.axvspan(iid_tok[64] * 1.04, 75000, color=GRID, alpha=0.7, lw=0, zorder=0)
+    ax1.text(61000, 40, "no i.i.d. reference", fontsize=5.5, color=INK2, ha="center", va="center", rotation=90)
     fig.tight_layout(w_pad=1.0)
     save(fig, "task2_passrate")
-
-    # ---- Figure 2: what makes a fork consequential
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(6.3, 2.2), gridspec_kw={"width_ratios": [1.5, 1]})
-    for ax, data, labels, xlabel, title in (
-        (ax1, by_sur, SUR_LABELS, r"surprisal of the forked token, $-\log p$ (nats)", "(a) by surprisal at the fork"),
-        (ax2, by_pos, ["0–.2", ".2–.4", ".4–.6", ".6–.8", ".8–1"], "fork position / parent length", "(b) by fork position")):
-        x = range(len(data))
-        for key, color, marker, ls, name in (("flip", INK, "o", "-", "correctness changes"),):
-            m = [d[key][0] for d in data]
-            ax.errorbar(x, m, yerr=[[d[key][0] - d[key][1] for d in data], [d[key][2] - d[key][0] for d in data]],
-                        color=color, marker=marker, ms=3.5, lw=1.4, ls=ls, capsize=1.5, label=name, mec="white", mew=0.5)
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(labels, fontsize=6)
-        ax.set_xlabel(xlabel)
-        ax.set_ylim(0, 12)
-        ax.set_title(title, loc="left", color=INK)
-        ax.grid(axis="x", visible=False)
-    ax1.set_ylabel("branches that flip correctness (%)")
-    for i, d in enumerate(by_sur):
-        ax1.annotate(f"{d['n'] / 1000:.0f}k forks", (i, 0.6), fontsize=5.3, color=INK2, ha="center")
-    for i, d in enumerate(by_pos):
-        ax2.annotate(f"{d['n'] / 1000:.0f}k forks", (i, 0.6), fontsize=5.3, color=INK2, ha="center")
-    fig.tight_layout(w_pad=1.2)
-    save(fig, "task2_forks")
 
     iid_rows = [{"k": k, "tokens": iid_tok[k], "pass": iid_curve[k], "mixed": iid_mixed[k]} for k in ks]
     return rows, iid_rows, by_sur, SUR_LABELS, by_pos, paired
