@@ -26,8 +26,10 @@ class LLMRayActor:
         os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
         import vllm
 
+        # raw_logprobs: log p_theta before temperature/top-p, as EPTree's surprisal and Phase II's
+        # continuation cross-entropy assume
         self.llm = vllm.LLM(*args, worker_extension_cls="openrlhf.trainer.ray.vllm_worker_wrap.WorkerWrap",
-                            enable_sleep_mode=True, **kwargs)
+                            enable_sleep_mode=True, logprobs_mode="raw_logprobs", **kwargs)
 
     asleep = False
 

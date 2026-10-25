@@ -3,8 +3,10 @@ from vllm import LLM
 from transformers import AutoTokenizer
 try:
     from openrlhf.trainer.ppo_utils.entropy_chain_local_manager import EntropyGuidedChainLocalManager
+    from openrlhf.trainer.ppo_utils.credit_aware_tree import CreditAwareChainLocalManager
 except:
     from entropy_chain_local_manager import EntropyGuidedChainLocalManager
+    from credit_aware_tree import CreditAwareChainLocalManager
 
 import math
 import os
@@ -76,7 +78,9 @@ def parallel_entropy_guided_tree(
     decode_fn=None,
     system_prompt=None,
 ):
-    manager = EntropyGuidedChainLocalManager(
+    # --phase2_k > 0: EPTree (Phase I) + novelty-aware credit-guided expansion (Phase II)
+    manager_cls = CreditAwareChainLocalManager if args.get("phase2_k", 0) > 0 else EntropyGuidedChainLocalManager
+    manager = manager_cls(
         args=args,
         llm=llm,
         encode_fn=tokenize_fn,

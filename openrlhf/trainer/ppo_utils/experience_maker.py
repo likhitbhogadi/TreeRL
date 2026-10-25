@@ -3273,6 +3273,11 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "use_diverse_sampling": self.strategy.args.use_diverse_sampling,
                     "diverse_upsampling": self.strategy.args.diverse_upsampling,
                     "training_type": self.strategy.args.training_type,
+                    # Phase II (credit_aware_tree.py); phase2_k = 0 keeps plain EPTree
+                    "phase2_k": self.strategy.args.phase2_k,
+                    "phase2_rho": self.strategy.args.phase2_rho,
+                    "novelty_score": self.strategy.args.novelty_score,
+                    "alloc_score": self.strategy.args.alloc_score,
                 }
                 
             print("entropy args:",args)

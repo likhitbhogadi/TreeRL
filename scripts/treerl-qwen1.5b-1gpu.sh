@@ -3,10 +3,12 @@
 # Same algorithm flags as scripts/treerl-qw14b.sh; actor (DeepSpeed ZeRO-2, CPU Adam), and the vLLM engine
 # share the GPU. See mid_submission/RL_CHANGES.md.
 #   GPU=0 STEPS=100 nohup scripts/treerl-qwen1.5b-1gpu.sh > /tmp/treerl_rl.log 2>&1 &
-# Baselines (same code; only the tree shape differs, TREE="M N L T"):
-#   TreeRL (EPTree 6,2,1,2; 16 of its 30 leaves trained on):  TREE="6 2 1 2" NUM_TRACE=16
-#   ChainRL (16 i.i.d. chains, all trained on):              TREE="16 0 0 0" NUM_TRACE=16 TAG=...-chainrl
-#   GRPO (same 16 chains, group-normalized advantage):       TREE="16 0 0 0" NUM_TRACE=16 ADV=grpo TAG=...-grpo
+# Baselines (same code; only the tree shape differs, TREE="M N L T"). NUM_TRACE defaults to every leaf:
+#   TreeRL (EPTree 6,2,1,2; all 30 leaves, as in the paper):  TREE="6 2 1 2"            (NUM_TRACE=16: released script)
+#   ChainRL (16 i.i.d. chains):                               TREE="16 0 0 0" TAG=...-chainrl
+#   GRPO (same 16 chains, group-normalized advantage):        TREE="16 0 0 0" ADV=grpo TAG=...-grpo
+# Ours (EPTree as Phase I, then PHASE2_K counterfactual rollouts; openrlhf/trainer/ppo_utils/credit_aware_tree.py):
+#   TREE="6 2 1 2" PHASE2_K=8 [PHASE2_RHO=0.5 NOVELTY=perplexity ALLOC=ucb]  -> n = 30 + 8 leaves
 # Reduced budget (see RL_CHANGES.md): ROLLOUT=8 NUM_TRACE=8 TREE="6 2 1 2" (or "8 0 0 0") MAX_LEN=2048 STEPS=40
 #   DATA=mid_submission/data/train_30k_mixed.jsonl  (from mid_submission/solve_rate.py --keep_mixed)
 set -x
@@ -17,8 +19,13 @@ source ~/likhit/.venv/bin/activate
 GPU=${GPU:-0}
 STEPS=${STEPS:-100}          # training steps; each step = ROLLOUT prompts x NUM_TRACE leaves
 ROLLOUT=${ROLLOUT:-16}       # prompts per step (paper: 16)
-NUM_TRACE=${NUM_TRACE:-16}   # leaves per tree used for training (paper: 16 of the 30 EPTree leaves)
 TREE=(${TREE:-6 2 1 2})      # EPTree M N L T; "16 0 0 0" = ChainRL (M i.i.d. chains; needs M >= NUM_TRACE)
+PHASE2_K=${PHASE2_K:-0}      # Phase II rollouts per tree after EPTree (0 = plain EPTree)
+PHASE2_RHO=${PHASE2_RHO:-0.5}  # share of T0's nodes kept by the novelty filter
+NOVELTY=${NOVELTY:-perplexity}  # novelty score D(v) (credit_aware_tree.NOVELTY_SCORES)
+ALLOC=${ALLOC:-ucb}          # allocation score (credit_aware_tree.ALLOC_SCORES)
+# leaves per tree used for training; default: all of them, M + L*M*N*T + PHASE2_K (30 for "6 2 1 2")
+NUM_TRACE=${NUM_TRACE:-$(( TREE[0] + TREE[2] * TREE[0] * TREE[1] * TREE[3] + PHASE2_K ))}
 KEEP_VLLM=${KEEP_VLLM:-}        # non-empty: vLLM keeps its GPU memory through training (no sleep; for shared GPUs)
 ADV=${ADV:-treerl}            # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
 MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
@@ -59,6 +66,7 @@ python train_reinforce_ray.py \
     --remote_rm_url $ROOT/scripts/remote_reward_url.json \
     --advantage_estimator $ADV \
     --use_mcts --use_entropy_tree --m ${TREE[0]} --n ${TREE[1]} --l ${TREE[2]} --t ${TREE[3]} \
+    --phase2_k $PHASE2_K --phase2_rho $PHASE2_RHO --novelty_score $NOVELTY --alloc_score $ALLOC \
     --process_supervision --use_state_value_reward --use_pure_binary \
     --use_weighted_value --weighted_value_style sqrt \
     --mask_repeated_samples \
