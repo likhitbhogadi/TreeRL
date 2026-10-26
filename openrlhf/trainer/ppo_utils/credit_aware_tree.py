@@ -121,45 +121,41 @@ class CreditAwareChainLocalManager(EntropyGuidedChainLocalManager):
         kids += [((c, 1), "branch") for c in node.child_nodes if c.parent_node_split_idx == p]
         return kids
 
-    @staticmethod
-    def _full_logprobs(node: TreeNode, cache: Dict[int, List[float]]) -> List[float]:
-        """Log-probs of node's whole response (prefix inherited from its ancestors + its own tokens)."""
-        if id(node) not in cache:
-            prefix = []
-            if node.parent_node is not None:
-                prefix = CreditAwareChainLocalManager._full_logprobs(node.parent_node, cache)
-                prefix = prefix[:len(node.parent_node.aggregate_token_ids) + node.parent_node_split_idx]
-            cache[id(node)] = prefix + list(node.log_prob_list)
-        return cache[id(node)]
-
     def _novelty(self, novelty_fn: Callable[[List[float]], float]) -> Dict[tuple, Tuple[State, float]]:
-        """D(u) for every eligible state of T0 (Eqs. 2-4): key -> ((node, p), D)."""
-        lp_cache: Dict[int, List[float]] = {}
-        cum = {}  # id(leaf) -> prefix sums of its response's log-probs
-        for tree_list in self.tree_lists:
-            for leaf in tree_list:
-                cum[id(leaf)] = [0.0] + list(accumulate(self._full_logprobs(leaf, lp_cache)))
+        """D(u) for every eligible state of T0 (Eqs. 2-4): key -> ((node, p), D).
+
+        Every leaf through state u shares u's prefix, so with C(u) = log-prob sum of that prefix,
+        H(l, u) = -(total_l - C(u)) / (end_l - cut): one number per state and two per leaf, instead of
+        a copy of each leaf's full log-prob list."""
+        nodes = [node for tree_list in self.tree_lists for node in tree_list]
+        own = {id(n): [0.0] + list(accumulate(n.log_prob_list)) for n in nodes}  # prefix sums of own tokens
+        base: Dict[int, float] = {}  # log-prob sum of the prefix a node inherits from its ancestors
+
+        def base_of(node: TreeNode) -> float:
+            if id(node) not in base:
+                parent = node.parent_node
+                base[id(node)] = 0.0 if parent is None else \
+                    base_of(parent) + own[id(parent)][node.parent_node_split_idx]
+            return base[id(node)]
+
+        total = {id(n): base_of(n) + own[id(n)][-1] for n in nodes}  # leaf's full-response log-prob
+        end = {id(n): len(n.aggregate_token_ids) + len(n.log_prob_list) for n in nodes}  # its length
 
         novelty = {}
-        for tree_list in self.tree_lists:
-            for node in tree_list:
-                base = len(node.aggregate_token_ids)
-                kids = sorted(node.child_nodes, key=lambda c: c.parent_node_split_idx, reverse=True)
-                through, j = [node], 0  # leaves through (node, p), growing as p moves left
-                for p in range(len(node.token_id_list) - 1, -1, -1):
-                    while j < len(kids) and kids[j].parent_node_split_idx >= p:
-                        through += _subtree_leaves(kids[j])
-                        j += 1
-                    if not self._eligible(node, p):
-                        continue
-                    cut = base + p
-                    hs = []
-                    for leaf in through:
-                        c = cum[id(leaf)]
-                        if len(c) - 1 > cut:
-                            hs.append(-(c[-1] - c[cut]) / (len(c) - 1 - cut))
-                    if hs:
-                        novelty[(id(node), p)] = ((node, p), novelty_fn(hs))
+        for node in nodes:
+            start, b, oc = len(node.aggregate_token_ids), base_of(node), own[id(node)]
+            kids = sorted(node.child_nodes, key=lambda c: c.parent_node_split_idx, reverse=True)
+            through, j = [node], 0  # leaves through (node, p), growing as p moves left
+            for p in range(len(node.token_id_list) - 1, -1, -1):
+                while j < len(kids) and kids[j].parent_node_split_idx >= p:
+                    through += _subtree_leaves(kids[j])
+                    j += 1
+                if not self._eligible(node, p):
+                    continue
+                cut, c_u = start + p, b + oc[p]
+                hs = [-(total[id(leaf)] - c_u) / (end[id(leaf)] - cut) for leaf in through if end[id(leaf)] > cut]
+                if hs:
+                    novelty[(id(node), p)] = ((node, p), novelty_fn(hs))
         return novelty
 
     # ---- Phase II -----------------------------------------------------
