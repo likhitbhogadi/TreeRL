@@ -36,6 +36,8 @@ ADAM_OFFLOAD=${ADAM_OFFLOAD-1}  # empty: Adam states on the GPU (~28 GB for 1.5B
 INFER_BS=${INFER_BS:-2}      # batch of the logprob pass; must divide NUM_TRACE (the remainder of a tree is dropped)
 [ $((NUM_TRACE % INFER_BS)) -eq 0 ] || { echo "INFER_BS=$INFER_BS must divide NUM_TRACE=$NUM_TRACE"; exit 1; }
 KEEP_VLLM=${KEEP_VLLM:-}        # non-empty: vLLM keeps its GPU memory through training (no sleep; for shared GPUs)
+HOLD_GPU=${HOLD_GPU:-}          # non-empty: the training and KL reference processes never give GPU memory back either
+                             # (shared GPUs; use with KEEP_VLLM=1 and INFER_BS=1 to keep the held peak small)
 KL=${KL:-1e-4}               # KL coefficient to the reference model (0 = paper's setting; > 0 loads a ref model)
 ADV=${ADV:-treerl}          # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
 MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
@@ -50,6 +52,7 @@ mkdir -p $SAVE_DIR
 export CUDA_VISIBLE_DEVICES=$GPU PYTHONPATH=$ROOT TOKENIZERS_PARALLELISM=false HF_HUB_OFFLINE=1 RAY_DEDUP_LOGS=0
 # Ray starts implicitly; "local" makes it start this run's own cluster rather than attach to another run's
 export RAY_ADDRESS=local
+[ -n "$HOLD_GPU" ] && export TREERL_HOLD_GPU=1  # read by the Ray workers (openrlhf/trainer/ray/launcher.py)
 
 python train_reinforce_ray.py \
     --actor_num_nodes 1 --actor_num_gpus_per_node 1 \
