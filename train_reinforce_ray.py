@@ -45,6 +45,8 @@ def _validate_args(args):
     ) == 0, f"actor_world_size must be power of 2, got {actor_world_size}"
     assert args.zero_stage != 3 or args.vllm_num_engines > 0, f"ZeRO-3 is only supported when vLLM enabled"
 
+    # the KL reference is the starting model; --resume below replaces args.pretrain with the newest checkpoint
+    args.ref_pretrain = args.pretrain
     if args.resume:
         # 检测 args.save_path 有没有 _actor_global_step，如果有的话，就取最大的
         import os
@@ -153,7 +155,7 @@ def train(args):
     # init reference/reward/actor model
     refs = []
     if ref_model is not None:
-        refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.pretrain))
+        refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.ref_pretrain))
     refs.extend(actor_model.async_init_model_from_pretrained(strategy, args.pretrain))
     if not args.remote_rm_url:
         for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):

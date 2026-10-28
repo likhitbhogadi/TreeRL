@@ -90,7 +90,11 @@ class ReferenceModelRayActor(BasePPORole):
         device = torch.cuda.current_device()
         with torch.no_grad():
             log_probs = self.model(sequences.to(device), num_actions, attention_mask.to(device), return_output)
-        return log_probs.to("cpu")
+        log_probs = log_probs.to("cpu")
+        # Hand this forward's memory (fp32 logits over a 152k vocabulary) back to the shared GPU: otherwise the cache
+        # stays at its peak (33 GB seen on one GPU) and the actor's optimizer step runs out of memory.
+        torch.cuda.empty_cache()
+        return log_probs
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
         # Broadcast weight to all vllm workers from source rank 0 (actor model)
