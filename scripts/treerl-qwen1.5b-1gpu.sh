@@ -8,7 +8,7 @@
 #   ChainRL (16 i.i.d. chains):                               TREE="16 0 0 0" TAG=...-chainrl
 #   GRPO (same 16 chains, group-normalized advantage):        TREE="16 0 0 0" ADV=grpo TAG=...-grpo
 # Ours (EPTree as Phase I, then PHASE2_K counterfactual rollouts; openrlhf/trainer/ppo_utils/credit_aware_tree.py):
-#   TREE="6 2 1 2" PHASE2_K=8 [PHASE2_RHO=0.5 NOVELTY=perplexity ALLOC=ucb]  -> n = 30 + 8 leaves
+#   TREE="6 2 1 2" PHASE2_K=8 [PHASE2_LAMBDA=0.5 PHASE2_H=20]  -> n = 30 + 8 leaves
 # Reduced budget (see RL_CHANGES.md): ROLLOUT=8 NUM_TRACE=8 TREE="6 2 1 2" (or "8 0 0 0") MAX_LEN=2048 STEPS=40
 #   DATA=mid_submission/data/train_30k_mixed.jsonl  (from mid_submission/solve_rate.py --keep_mixed)
 set -x
@@ -21,9 +21,8 @@ STEPS=${STEPS:-100}          # training steps; each step = ROLLOUT prompts x NUM
 ROLLOUT=${ROLLOUT:-16}       # prompts per step (paper: 16)
 TREE=(${TREE:-6 2 1 2})      # EPTree M N L T; "16 0 0 0" = ChainRL (M i.i.d. chains; needs M >= NUM_TRACE)
 PHASE2_K=${PHASE2_K:-0}      # Phase II rollouts per tree after EPTree (0 = plain EPTree)
-PHASE2_RHO=${PHASE2_RHO:-0.5}  # share of T0's nodes kept by the novelty filter
-NOVELTY=${NOVELTY:-perplexity}  # novelty score D(v) (credit_aware_tree.NOVELTY_SCORES)
-ALLOC=${ALLOC:-ucb}          # allocation score (credit_aware_tree.ALLOC_SCORES)
+PHASE2_LAMBDA=${PHASE2_LAMBDA:-0.5}  # J = lambda * novelty + (1 - lambda) * credit
+PHASE2_H=${PHASE2_H:-20}     # novelty horizon h in tokens
 # leaves per tree used for training; default: all of them, M + L*M*N*T + PHASE2_K (30 for "6 2 1 2")
 NUM_TRACE=${NUM_TRACE:-$(( TREE[0] + TREE[2] * TREE[0] * TREE[1] * TREE[3] + PHASE2_K ))}
 KEEP_VLLM=${KEEP_VLLM:-}        # non-empty: vLLM keeps its GPU memory through training (no sleep; for shared GPUs)
@@ -66,7 +65,7 @@ python train_reinforce_ray.py \
     --remote_rm_url $ROOT/scripts/remote_reward_url.json \
     --advantage_estimator $ADV \
     --use_mcts --use_entropy_tree --m ${TREE[0]} --n ${TREE[1]} --l ${TREE[2]} --t ${TREE[3]} \
-    --phase2_k $PHASE2_K --phase2_rho $PHASE2_RHO --novelty_score $NOVELTY --alloc_score $ALLOC \
+    --phase2_k $PHASE2_K --phase2_lambda $PHASE2_LAMBDA --phase2_horizon $PHASE2_H \
     --process_supervision --use_state_value_reward --use_pure_binary \
     --use_weighted_value --weighted_value_style sqrt \
     --mask_repeated_samples \

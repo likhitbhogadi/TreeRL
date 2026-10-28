@@ -15,7 +15,6 @@ from openrlhf.trainer.ray import (
     RewardModelRayActor,
     create_vllm_engines,
 )
-from openrlhf.trainer.ppo_utils.credit_aware_tree import ALLOC_SCORES, NOVELTY_SCORES
 from openrlhf.utils import blending_datasets, get_strategy, get_tokenizer
 
 
@@ -33,7 +32,8 @@ def _validate_args(args):
         "GRPO is defined on a group of independent samples: use --l 0 (no forks), --m = group size"
     if args.phase2_k > 0:
         assert args.use_entropy_tree, "Phase II expands the EPTree: --use_entropy_tree"
-        assert 0 < args.phase2_rho <= 1, f"--phase2_rho must be in (0, 1], got {args.phase2_rho}"
+        assert 0 <= args.phase2_lambda <= 1, f"--phase2_lambda must be in [0, 1], got {args.phase2_lambda}"
+        assert args.phase2_horizon >= 1, f"--phase2_horizon must be >= 1, got {args.phase2_horizon}"
     if args.use_entropy_tree:
         leaves = args.m + args.l * args.m * args.n * args.t + args.phase2_k  # n = (n - k) + k
         assert args.num_trace_per_sample <= leaves, \
@@ -404,12 +404,10 @@ if __name__ == "__main__":
     # Phase II: novelty-aware credit-guided expansion of the EPTree (openrlhf/trainer/ppo_utils/credit_aware_tree.py)
     parser.add_argument("--phase2_k", type=int, default=0,
                         help="k extra rollouts per tree after EPTree's n - k leaves; 0 = plain EPTree")
-    parser.add_argument("--phase2_rho", type=float, default=0.5,
-                        help="fraction of T0's eligible nodes kept by the novelty filter (Eq. 5)")
-    parser.add_argument("--novelty_score", choices=sorted(NOVELTY_SCORES), default="perplexity",
-                        help="D(v) for the novelty filter (register new ones in credit_aware_tree.NOVELTY_SCORES)")
-    parser.add_argument("--alloc_score", choices=sorted(ALLOC_SCORES), default="ucb",
-                        help="score maximised to pick v* (register new ones in credit_aware_tree.ALLOC_SCORES)")
+    parser.add_argument("--phase2_lambda", type=float, default=0.5,
+                        help="J(v) = lambda * novelty(parent(v)) + (1 - lambda) * credit(v)")
+    parser.add_argument("--phase2_horizon", type=int, default=20,
+                        help="h: novelty = P(a new rollout differs from every observed one within h tokens)")
  
     args = parser.parse_args()
     train(args)

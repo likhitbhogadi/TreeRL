@@ -3275,9 +3275,8 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
                     "training_type": self.strategy.args.training_type,
                     # Phase II (credit_aware_tree.py); phase2_k = 0 keeps plain EPTree
                     "phase2_k": self.strategy.args.phase2_k,
-                    "phase2_rho": self.strategy.args.phase2_rho,
-                    "novelty_score": self.strategy.args.novelty_score,
-                    "alloc_score": self.strategy.args.alloc_score,
+                    "phase2_lambda": self.strategy.args.phase2_lambda,
+                    "phase2_horizon": self.strategy.args.phase2_horizon,
                 }
                 
             print("entropy args:",args)
