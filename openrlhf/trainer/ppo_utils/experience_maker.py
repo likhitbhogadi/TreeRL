@@ -1,4 +1,5 @@
 from itertools import chain
+import hashlib
 import logging
 import random
 import threading
@@ -98,6 +99,29 @@ def grpo_advantages(paths):
         for segment in path:
             segment["value"] = a
     return paths
+
+
+def tree_record(problem, label, paths, overlong, nodes=None):
+    """One prompt's rollout for the RL tree log (trees.jsonl; written by the trainer with the step number).
+    q: hash of the problem text, to join with the data file (sha1 of the "text" field, first 12 hex digits).
+    paths: the trained responses, in training order: leaf reward r and the path's segments as
+    [tokens, advantage] (the per-token advantage before the truncation penalty and KL).
+    nodes: every generated response's node (EntropyGuidedChainLocalManager.node_summary), one list per tree."""
+    rec = {
+        "q": hashlib.sha1(problem.encode()).hexdigest()[:12],
+        "label": str(label),
+        "trained": len(paths),
+        "correct_trained": sum(p[-1]["pass_ratio"] == 1 for p in paths),
+        "trained_tokens": sum(len(s["token_answer"]) for p in paths for s in p),
+        "truncated": sum(o == 0 for o in overlong),
+        "paths": [{"r": float(p[-1]["pass_ratio"]),
+                   "segs": [[len(s["token_answer"]), round(float(s["value"]), 4)] for s in p]} for p in paths],
+    }
+    if nodes:
+        flat = [n for tree in nodes for n in tree]
+        rec.update(leaves=len(flat), correct_leaves=sum(n["r"] == 1 for n in flat),
+                   gen_tokens=sum(n["len"] for n in flat), nodes=nodes)
+    return rec
 
 
 def get_eos_token_id(tokenizer):
@@ -2170,16 +2194,19 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         start = time.time()
         rank = torch.distributed.get_rank()
         batching_llm = BatchingLLM(self.vllm_engines[rank % len(self.vllm_engines)], micro_batch_size_roll_out)
+        records = [{} for _ in range(micro_batch_size_roll_out)]  # per-prompt tree log, filled by _generate_vllm_mcts
 
         def build_tree(i):
             try:  # prompt i: [question, history, label, source]
                 batch_prompts = [p[i] if p is not None else None for p in prompts]
-                return self._generate_vllm_mcts(batch_prompts, num_trace_per_sample, llm=batching_llm, **generate_kwargs)
+                return self._generate_vllm_mcts(batch_prompts, num_trace_per_sample, llm=batching_llm,
+                                                tree_record=records[i], **generate_kwargs)
             finally:
                 batching_llm.done()
 
         with ThreadPoolExecutor(micro_batch_size_roll_out) as pool:
             trees = list(pool.map(build_tree, range(micro_batch_size_roll_out)))
+        self.tree_records = records  # the trainer writes these to trees.jsonl with the step number
         # free the colocated vLLM engine's GPU memory for the logprob pass and training; it wakes itself
         # on the next generate(), and the weight sync after training wakes it too
         ray.get(batching_llm.engine.sleep.remote())
@@ -3199,6 +3226,7 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
         entropy_rm_url = self.strategy.args.reward_model_url
         b_mean = kwargs.get("b_mean", 2.898)
 
+        tree_info = {}  # per-node summary for the tree log (entropy trees only)
         if use_entropy_tree:
             def decode_fn(ids):
                 return self.tokenizer.decode(ids, skip_special_tokens=False)
@@ -3278,9 +3306,9 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             print("entropy args:",args)
             system_prompt = kwargs.get("system_prompt", None)
             if self.strategy.args.training_type == "general":
-                paths, raw_avg_reward = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn,system_prompt=system_prompt)  
+                paths, raw_avg_reward = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn,system_prompt=system_prompt, info=tree_info)
             else: 
-                paths = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn,system_prompt=system_prompt)   
+                paths = parallel_entropy_guided_tree(item, llm, args, self.tokenize_fn, decode_fn,system_prompt=system_prompt, info=tree_info)
             input_ids = self.tokenize_fn([[item["problem"]],[None]],1024, device="cpu",system_prompt=system_prompt)["input_ids"][0].tolist()
             # print(input_ids)
         else:
@@ -3400,6 +3428,12 @@ class RemoteExperienceMaker(NaiveExperienceMaker):
             for i in range(len(paths)):
                 if paths[i][-1]["pass_ratio"] == 1:
                     seq_rewards[i] = [r * self.strategy.args.correct_bonus_ratio for r in seq_rewards[i]]
+        record = kwargs.get("tree_record")
+        if record is not None:
+            try:
+                record.update(tree_record(item["problem"], item["golden_answer"], paths, overlong, tree_info.get("nodes")))
+            except Exception as e:  # logging only: never fail the rollout
+                print("tree_record failed:", e)
         sequences = torch.tensor(sequences)
         seq_rewards = torch.tensor(seq_rewards).float()
         # assert seq_rewards.shape == sequences.shape, f"seq_rewards: {seq_rewards.shape}, sequences: {sequences.shape}"

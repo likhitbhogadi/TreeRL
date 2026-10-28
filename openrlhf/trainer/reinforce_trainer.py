@@ -1,6 +1,7 @@
 import json
 import math
 import os.path
+import time
 from abc import ABC
 from typing import Any, Callable, Dict, List, Optional, Union
 
@@ -189,6 +190,8 @@ class ReinforceTrainer(ABC):
             print("No past steps")
             print("*" * 20)
         
+        resumed_from = past_steps  # logged on every step: > 0 marks steps trained after a resume (fresh Adam)
+        tree_stats = {}  # step totals from the tree log, merged into train_log.jsonl
         for episode in range(args.num_episodes):
             if isinstance(self.prompts_dataloader.sampler, DistributedSampler):
                 self.prompts_dataloader.sampler.set_epoch(episode)
@@ -206,6 +209,8 @@ class ReinforceTrainer(ABC):
                     continue
                 # experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue, sample_table = self.sample_table, **self.generate_kwargs)
                 experience = self.experience_maker.make_experience(rand_prompts, use_mcts = self.use_mcts, use_vinevalue = self.use_vinevalue,use_sentence_level_value = False, **self.generate_kwargs)
+                for k, v in self._log_trees(args, global_step).items():  # summed over the rollouts of this update
+                    tree_stats[k] = tree_stats.get(k, 0) + v
 
                 # print prompt/answer in each update step
                 # if global_step % update_timesteps == 0:
@@ -238,7 +243,15 @@ class ReinforceTrainer(ABC):
                     torch.cuda.empty_cache()
                     if self.strategy.args.normalize_advantage:
                         self.replay_buffer.normalize("advantages", self.strategy)
+                    start = time.time()
                     status = self.reinforce_train(global_step)
+                    status["train_time"] = time.time() - start  # policy update + weight sync to vLLM
+                    try:
+                        status["lr"] = self.actor_scheduler.get_last_lr()[0]
+                    except Exception:
+                        pass
+                    status.update(tree_stats, resumed_from=resumed_from)
+                    tree_stats = {}
                     self.replay_buffer.clear()
                     torch.cuda.empty_cache()
                     self.kl_ctl.update(status["kl"], args.rollout_batch_size)
@@ -247,6 +260,38 @@ class ReinforceTrainer(ABC):
 
                 pbar.update()
                 global_step = global_step + 1
+
+    def _log_trees(self, args, global_step):
+        """Append this rollout's trees (experience_maker.tree_records) to <save_path>/trees.jsonl and return
+        totals for train_log.jsonl. Logging only: it never raises."""
+        records = getattr(self.experience_maker, "tree_records", None) or []
+        self.experience_maker.tree_records = []
+        indexed = [(i, r) for i, r in enumerate(records) if r]  # i: the prompt's place in the rollout batch
+        records = [r for _, r in indexed]
+        if not records:
+            return {}
+        try:
+            if self.strategy.is_rank_0():
+                os.makedirs(args.save_path, exist_ok=True)
+                with open(os.path.join(args.save_path, "trees.jsonl"), "a") as f:
+                    for i, rec in indexed:
+                        f.write(json.dumps({"global_step": global_step, "prompt": i, **rec}) + "\n")
+            stats = {
+                "trained_responses": sum(r["trained"] for r in records),
+                "trained_tokens": sum(r["trained_tokens"] for r in records),
+                "truncated": sum(r["truncated"] for r in records),
+            }
+            if all("leaves" in r for r in records):  # entropy trees: counts over every generated response
+                stats.update(
+                    generated_responses=sum(r["leaves"] for r in records),
+                    gen_tokens=sum(r["gen_tokens"] for r in records),  # inference cost: shared prefixes once
+                    prompts_all_correct=sum(r["correct_leaves"] == r["leaves"] for r in records),
+                    prompts_all_wrong=sum(r["correct_leaves"] == 0 for r in records),  # no gradient from these
+                )
+            return stats
+        except Exception as e:
+            self.strategy.print(f"tree log failed: {e}")
+            return {}
 
     def reinforce_train(self, global_step):
         # replay buffer may be empty at first, we should rebuild at each training

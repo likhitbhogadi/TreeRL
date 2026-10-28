@@ -263,6 +263,10 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 "pass_rate": experiences["pass_rate"] if "pass_rate" in experiences else 0,
                 "pass_at_1": experiences["pass_at_1"] if "pass_at_1" in experiences else 0,
                 "response_entropy": response_entropy,
+                # per-response token mean of the advantage the loss uses (after the truncation penalty and KL),
+                # and of its magnitude: the size of the learning signal per response
+                "adv_mean": masked_mean(reward, action_mask, dim=-1),
+                "adv_abs": masked_mean(reward.abs(), action_mask, dim=-1),
             }
         else:
             info = {

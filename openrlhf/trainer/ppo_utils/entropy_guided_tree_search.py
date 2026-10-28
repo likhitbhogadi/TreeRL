@@ -75,7 +75,10 @@ def parallel_entropy_guided_tree(
     tokenize_fn=None,
     decode_fn=None,
     system_prompt=None,
+    info=None,
 ):
+    """Build one EPTree and return its training paths. info (optional dict) receives the tree's
+    per-node summary under "nodes", for the RL tree log."""
     manager = EntropyGuidedChainLocalManager(
         args=args,
         llm=llm,
@@ -88,6 +91,11 @@ def parallel_entropy_guided_tree(
 
     result = manager.process_single_item(item, args)
     paths = result["paths"]
+    if info is not None:
+        try:
+            info["nodes"] = manager.node_summary()
+        except Exception as e:  # logging only: never fail the rollout
+            print("node_summary failed:", e)
     if args["training_type"] == "general":
         raw_avg_reward = result["raw_avg_reward"]
         return paths, raw_avg_reward

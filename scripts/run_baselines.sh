@@ -12,7 +12,7 @@ source ~/likhit/.venv/bin/activate
 NEED_RL=${NEED_RL:-30000}      # MiB free to start RL: ~24 GB peak with KEEP_VLLM=1, + margin for other users' jobs growing
 TRIES=${TRIES:-6}             # attempts per training run (most failures are other users' jobs taking memory at startup)
 NEED_EVAL=${NEED_EVAL:-14000}  # vLLM at 0.28 x 46 GB
-COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=${STEPS:-40} SAVE_STEPS=10 VLLM_MEM=0.3"
+COMMON="ROLLOUT=8 NUM_TRACE=8 MAX_LEN=2048 STEPS=${STEPS:-40} SAVE_STEPS=10 VLLM_MEM=0.3 KL=0"  # KL=0: these runs used it (the launcher now defaults to the paper's 1e-4)
 DATA=$ROOT/mid_submission/data/train_30k_mixed.jsonl
 EVAL_SETS="../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl"
 DONE=$ROOT/ckpt/.done

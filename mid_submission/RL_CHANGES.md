@@ -9,6 +9,20 @@ The algorithm itself is untouched: `tree_node.py`, `parallel_mcts.gather_paths`,
 
 Status: runs end to end. The first 1.5B run (TreeRL, 40 steps at the reduced budget) completed in 67 min with a measured peak of 18.4 GB of GPU memory; see [VRAM](#vram-does-15b-fit-in-40-gb) and [Time](#time). ChainRL and the checkpoint evaluations are queued in `scripts/run_baselines.sh`.
 
+**Update 2026-10-28: paper-setting reruns.** See [RERUN_PAPER.md](RERUN_PAPER.md).
+- The launcher now defaults to the paper's batch: all 30 tree leaves, 16 chains for the baselines, 16 prompts per step.
+- The LR warmup step count is fixed.
+- `solve_rate.py --exclude` drops eval problems from the training data.
+- `scripts/run_paper.sh` runs all three methods.
+- New per-tree log `trees.jsonl` and extra `train_log.jsonl` fields (generated tokens, advantages, LR, zero-signal prompts).
+- `ADAM_OFFLOAD=` keeps Adam on the GPU (80 GB cards); OlympiadBench joins the evaluation sets.
+- RERUN_PAPER.md §6 has the GPU plan for the ₹6,000 cloud budget.
+- KL = 1e-4 (the paper's text) by default, with the reference model kept at the starting model after a resume; `SEED` knob.
+- `run_paper.sh` keeps each run's settings in `run_config`, puts the seed in run names, and reports unfinished stages
+  (`PAPER_RUNS_INCOMPLETE`, exit 1) and resumed runs.
+
+The commands below show the earlier reduced-budget settings.
+
 ## How to run
 
 On pkgpu2, the code is in `~/likhit/tree_based_rl/TreeRL_rl/` (a copy of this repo; the uv venv `~/likhit/.venv` now also has `deepspeed datasets accelerate`).

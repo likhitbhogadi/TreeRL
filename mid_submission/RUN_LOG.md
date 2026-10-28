@@ -237,3 +237,37 @@ cd mid_submission && python -m tree_alloc.rl_report results/rl      # -> eval_ta
 `/home` had 4.3 GB free with GRPO still writing checkpoints. Moved already-scored checkpoints to
 `/scratch/likhit/treerl_ckpt_archive` and left symlinks at the old paths (long TreeRL steps 50/100/150, long ChainRL 50/100,
 the 40-step runs' step 40). `/home` back to 22 GB free.
+
+## 2026-10-28: paper-setting runs on JarvisLabs (RTX PRO 6000, 96 GB, ₹208.66/hr with storage)
+
+Instance `root@151.185.34.50`: Ubuntu 22.04, driver 595.58, CUDA 12.6 compiler, 28 vCPU, 150 GB `/home`.
+Code: `rsync` from the laptop into `/home/TreeRL` (RERUN_PAPER.md section 7). All jobs run in `tmux` sessions.
+
+1. `bash scripts/setup_cloud.sh` → `/home/setup.log`: same package versions as pkgpu2 (torch 2.13.0+cu129,
+   vLLM 0.30.0+cu129, transformers 5.17.0, DeepSpeed 0.19.7, Ray 2.58.0) in `/home/venv`, model in `/home/hf`.
+   - DeepSpeed's GPU Adam failed: `nvcc fatal: Unsupported gpu architecture 'compute_120'` (CUDA 12.6 predates Blackwell).
+   - Installed CUDA 12.9's compiler and headers from NVIDIA's apt repository (`cuda-minimal-build-12-9` and the
+     cuBLAS, cuSPARSE, cuSOLVER, cuRAND and NVRTC headers); `setup_cloud.sh` now does this itself on Blackwell.
+     Re-ran setup → GPU Adam ok. `/home/treerl_env.sh`: `ADAM_OFFLOAD= KEEP_VLLM=1 VLLM_MEM=0.25 NEED_RL=70000 EVAL_MEM=0.3`.
+2. Smoke tests (`scripts/smoke_test.sh`):
+   - With CPU Adam: everything passed (TreeRL, ChainRL, GRPO, evaluation).
+   - With GPU Adam: TreeRL passed. ChainRL and GRPO ran out of memory: earlier runs' `ray::ActorModelRayActor`
+     processes were still alive, holding ~75 GB. Ray workers leave the launcher's process group, so killing the
+     group missed them.
+     Fix: `run_paper.sh` and `smoke_test.sh` mark each run with `TREERL_RUN=<id>` and kill every process carrying it;
+     the smoke test now checks that nothing of ours is left on the GPU.
+   - The timing run (16 prompts × 30 leaves) then ran out of memory at step 5, in the optimizer step (needs +6 GB).
+     The KL reference model held 33 GB of cached memory.
+     Fix: `ReferenceModelRayActor.forward` calls `torch.cuda.empty_cache()` after each forward; `VLLM_MEM` 0.3 → 0.25.
+   - Re-run (ChainRL, GRPO, 10-step TreeRL timing run): **passed**. **1.68 min per TreeRL step**, peak 78 of 98 GB.
+     ChainRL and GRPO peaked at 52 GB.
+3. Training data (`/home/next.sh`, step 2): `solve_rate.py` with `--sample 12000 --n 8 --max_tokens 3072` and the four
+   eval sets excluded → `mid_submission/data/train_30k_mixed_12k.jsonl` (226 eval problems dropped; ~1 h).
+4. Then `SAVE_STEPS=50 STEPS=200 ONLY="treerl chainrl grpo" scripts/run_paper.sh` → `/home/paper.log`; checkpoints and
+   logs in `/home/ckpt`.
+5. 2026-10-28 18:50 UTC: GRPO postponed. `/home/stop_after_chainrl.sh` (tmux session `stopper`) ends the pipeline once
+   ChainRL's last evaluation (step 200, 8 samples) is done, before GRPO trains. The laptop watcher
+   (`scripts/watch_and_pause.sh 551823 root@151.185.34.50`, log `~/jarvis_watch.log`) then copies the results back and
+   pauses the instance. GRPO later: `jl resume 551823`, `bash scripts/setup_cloud.sh` (restores the CUDA 12.9
+   compiler if the pause dropped it), then `source /home/treerl_env.sh && SAVE_STEPS=50 STEPS=200 ONLY=grpo
+   scripts/run_paper.sh`; its base-model evaluations are already done and are skipped.

@@ -4,6 +4,11 @@
   # (a tree whose leaves are all right or all wrong gets zero advantage, i.e. no gradient, in TreeRL)
   python solve_rate.py --data ../datasets/train/train_30k.jsonl --sample 3000 --n 8 \
       --keep_mixed data/train_30k_mixed.jsonl
+  # larger set for the paper-setting runs, without problems that are also in the eval sets (RERUN_PAPER.md)
+  python solve_rate.py --data ../datasets/train/train_30k.jsonl --sample 12000 --n 8 --max_tokens 3072 \
+      --exclude ../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl \
+                ../datasets/eval/olympiad_bench.jsonl \
+      --keep_mixed data/train_30k_mixed_12k.jsonl --out data/train_30k_solve_rate_n8_12k.jsonl
 
   # evaluate a model or an RL checkpoint: greedy accuracy (or e.g. --n 4 --temperature 1.0: mean over 4 samples)
   python solve_rate.py --model ../ckpt/<tag>/_actor_global_step40 --temperature 0 --summary results/rl_eval.csv \
@@ -11,7 +16,7 @@
 
 Prompts are the RL prompts (Qwen2.5-Math chat template and its "reason step by step ... \\boxed{}" system prompt);
 problems with prompts over 1024 tokens are skipped, as RL's --prompt_max_len would truncate them. A truncated
-response counts as wrong. Per-problem correct counts go to --out (JSONL).
+response counts as wrong. Per-problem correct counts, mean response length and truncations go to --out (JSONL).
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ import csv
 import json
 import os
 import random
+import re
 import sys
 import time
 
@@ -30,6 +36,10 @@ from tree_alloc.data import load_problems  # noqa: E402
 from tree_alloc.verify import Verifier  # noqa: E402
 
 MAX_PROMPT = 1024  # RL's --prompt_max_len
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"\s+", "", text).lower()
 
 
 def main():
@@ -46,6 +56,8 @@ def main():
     ap.add_argument("--out", help="per-problem results (JSONL)")
     ap.add_argument("--keep_mixed", help="write the rows solved 0 < c < n times here, with a solve_rate field")
     ap.add_argument("--summary", help="append one CSV row per data file")
+    ap.add_argument("--exclude", nargs="+", default=[],
+                    help="drop problems whose text (whitespace and case ignored) appears in these files, e.g. eval sets")
     a = ap.parse_args()
 
     from vllm import SamplingParams
@@ -59,12 +71,17 @@ def main():
     sp = SamplingParams(n=n, temperature=a.temperature, top_p=a.top_p if a.temperature else 1.0,
                         max_tokens=a.max_tokens, seed=a.seed)
     mixed = open(a.keep_mixed, "w") if a.keep_mixed else None
+    excluded = {_norm(p.question) for f in a.exclude for p in load_problems(f)}
 
     for path in a.data:
         probs = load_problems(path)
         if a.sample:
             random.Random(a.seed).shuffle(probs)
             probs = probs[:a.sample]
+        if a.exclude:
+            n_before = len(probs)
+            probs = [p for p in probs if _norm(p.question) not in excluded]
+            print(f"{os.path.basename(path)}: dropped {n_before - len(probs)} problems found in --exclude files", flush=True)
         prompts = [gen.encode_prompt(p.question) for p in probs]
         keep = [i for i, ids in enumerate(prompts) if len(ids) <= MAX_PROMPT]
         t0 = time.time()
@@ -73,7 +90,9 @@ def main():
         for i, o in zip(keep, outs):
             p = probs[i]
             c = sum(s.finish_reason == "stop" and ver(s.text, p.answer) > 0 for s in o.outputs)
-            rows.append({"data": os.path.basename(path), "id": p.id, "n": n, "correct": c})
+            rows.append({"data": os.path.basename(path), "id": p.id, "n": n, "correct": c,
+                         "len": round(sum(len(s.token_ids) for s in o.outputs) / len(o.outputs), 1),  # mean tokens
+                         "trunc": sum(s.finish_reason != "stop" for s in o.outputs)})
             if mixed and 0 < c < n:
                 mixed.write(json.dumps({**p.raw, "solve_rate": c / n}) + "\n")
 

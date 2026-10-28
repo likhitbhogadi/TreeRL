@@ -147,7 +147,10 @@ class ActorModelRayActor(BasePPORole):
         )
 
         # configure scheduler
-        num_update_steps_per_episodes = len(self.prompts_dataloader) * args.max_epochs // strategy.accumulated_gradient
+        # optimizer steps = this rank's responses / responses per optimizer step. Was prompt batches // micro-batches
+        # per step (e.g. 150 // 64 = 2), which made the 5% warmup a single step at lr 0 (0 steps at batch 480).
+        samples = len(self.prompts_dataloader) * args.micro_rollout_batch_size * args.num_trace_per_sample
+        num_update_steps_per_episodes = samples * args.max_epochs // (strategy.accumulated_gradient * args.micro_train_batch_size)
         max_steps = math.ceil(args.num_episodes * num_update_steps_per_episodes)
         self.max_steps = max_steps
 

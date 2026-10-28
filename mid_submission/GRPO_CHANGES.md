@@ -2,6 +2,8 @@
 
 GRPO (Group Relative Policy Optimization) is from DeepSeekMath (Shao et al., 2024, `deepseek_grpo.pdf`, Sec. 4.1). We add it as a third baseline next to TreeRL and ChainRL, in the same training code (see [RL_CHANGES.md](RL_CHANGES.md)). It is one new option: the default behaviour, and so every TreeRL and ChainRL run, is unchanged.
 
+**It is a GRPO-style advantage baseline, not a reproduction of DeepSeekMath's GRPO.** The paper-setting reruns use 16 chains and KL β = 1e-4 as a per-token reward penalty, shared with TreeRL and ChainRL. DeepSeekMath puts the KL in the loss, with β = 0.04. Truncated responses get −1 on every token after group normalization, the same penalty as the other two methods. The full comparison is in [RERUN_PAPER.md §3](RERUN_PAPER.md#3-settings-a-scaled-replication). The tables below describe the earlier 8-chain runs.
+
 ## GRPO in one paragraph
 
 For each question, sample a group of G outputs from the current policy and score them. **Outcome supervision (Sec. 4.1.2)** gives every token of output *i* the same advantage:
