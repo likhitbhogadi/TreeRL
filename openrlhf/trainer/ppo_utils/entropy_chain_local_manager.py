@@ -428,6 +428,33 @@ class EntropyGuidedChainLocalManager:
             return paths,root.reward_raw
         return paths
 
+    def node_summary(self) -> List[List[Dict[str, Any]]]:
+        """Compact per-node record of the built trees, for the RL tree log (trees.jsonl). Every node is one
+        generated response (it ends in exactly one leaf). parent/split: the node it forked from and the token
+        index there; prefix: tokens before this node's first token; fork_nll: surprisal of the parent's token
+        at the fork (what EPTree ranks); phase/score: set by a method that records why it placed a fork."""
+        out = []
+        for tree_list in self.tree_lists:
+            nodes = []
+            for node in tree_list:
+                parent, split = node.parent_node, node.parent_node_split_idx
+                fork_nll = None
+                if parent is not None and split is not None and split < len(parent.log_prob_list):
+                    fork_nll = round(-float(parent.log_prob_list[split]), 4)
+                nodes.append({
+                    "parent": node.parent_node_idx,
+                    "split": split,
+                    "prefix": len(node.aggregate_token_ids),
+                    "len": node.token_num,
+                    "finish": node.finish_reason,
+                    "r": node.binary_score,
+                    "fork_nll": fork_nll,
+                    "phase": getattr(node, "phase", None) or ("II" if getattr(node, "phase2", False) else None),
+                    "score": getattr(node, "select_score", None),
+                })
+            out.append(nodes)
+        return out
+
     def serialize_tree_list(self, tree_list):
         """
         serialize the single tree list.

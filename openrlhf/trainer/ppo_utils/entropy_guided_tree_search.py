@@ -77,7 +77,10 @@ def parallel_entropy_guided_tree(
     tokenize_fn=None,
     decode_fn=None,
     system_prompt=None,
+    info=None,
 ):
+    """Build one EPTree (plus Phase II rollouts if --phase2_k > 0) and return its training paths. info (optional
+    dict) receives the tree's per-node summary under "nodes" and Phase II's log under "phase2", for the RL tree log."""
     # --phase2_k > 0: EPTree (Phase I) + novelty-aware credit-guided expansion (Phase II)
     manager_cls = CreditAwareChainLocalManager if args.get("phase2_k", 0) > 0 else EntropyGuidedChainLocalManager
     manager = manager_cls(
@@ -92,6 +95,12 @@ def parallel_entropy_guided_tree(
 
     result = manager.process_single_item(item, args)
     paths = result["paths"]
+    if info is not None:
+        try:
+            info["nodes"] = manager.node_summary()
+            info["phase2"] = getattr(manager, "phase2_log", None)  # Phase II: one entry per extra rollout
+        except Exception as e:  # logging only: never fail the rollout
+            print("node_summary failed:", e)
     if args["training_type"] == "general":
         raw_avg_reward = result["raw_avg_reward"]
         return paths, raw_avg_reward
