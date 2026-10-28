@@ -26,7 +26,8 @@ PHASE2_H=${PHASE2_H:-20}     # novelty horizon h in tokens
 # leaves per tree used for training; default: all of them, M + L*M*N*T + PHASE2_K (30 for "6 2 1 2")
 NUM_TRACE=${NUM_TRACE:-$(( TREE[0] + TREE[2] * TREE[0] * TREE[1] * TREE[3] + PHASE2_K ))}
 KEEP_VLLM=${KEEP_VLLM:-}        # non-empty: vLLM keeps its GPU memory through training (no sleep; for shared GPUs)
-ADV=${ADV:-treerl}            # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
+KL=${KL:-1e-4}               # KL coefficient to the reference model (0 = paper's setting; > 0 loads a ref model)
+ADV=${ADV:-treerl}          # advantage: treerl (tree values) | grpo (needs TREE="G 0 0 0"; mid_submission/GRPO_CHANGES.md)
 MAX_LEN=${MAX_LEN:-3072}     # max response tokens (Task 2: median 682, 1.1% over 2048)
 RESUME=${RESUME:-}             # non-empty: resume from the newest $SAVE_DIR/_actor_global_step* (must exist)
 DATA=$(realpath "${DATA:-$ROOT/datasets/train/train_30k.jsonl}")  # absolute: Ray workers have their own cwd
@@ -56,7 +57,7 @@ python train_reinforce_ray.py \
     --generate_max_len $MAX_LEN \
     --zero_stage 2 --adam_offload --bf16 --gradient_checkpointing \
     --actor_learning_rate ${LR:-1.5e-6} --lr_scheduler_type cosine --min_actor_learning_rate_lr 1 --l2 0.1 \
-    --init_kl_coef 0 \
+    --init_kl_coef $KL \
     --prompt_data $DATA,1 \
     --input_key text --label_key label --source_key data_type \
     --top_p 0.95 --temperature 1.0 \
