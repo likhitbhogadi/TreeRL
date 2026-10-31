@@ -1,0 +1,1 @@
+tree=6 2 1 2  steps=200 rollout=16 lr=1.5e-6 kl=1e-4 seed=42 max_len=3072 data=train_30k_mixed_12k.jsonl data_cksum=403789637

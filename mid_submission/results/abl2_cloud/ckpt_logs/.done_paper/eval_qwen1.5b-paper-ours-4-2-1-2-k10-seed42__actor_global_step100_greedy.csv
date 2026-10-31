@@ -1,0 +1,5 @@
+model,data,problems,n,temperature,mean_acc,pass_at_n
+/home/ckpt/qwen1.5b-paper-ours-4-2-1-2-k10-seed42/_actor_global_step100,MATH500.jsonl,500,1,0.0,0.7340,0.7340
+/home/ckpt/qwen1.5b-paper-ours-4-2-1-2-k10-seed42/_actor_global_step100,aimo-validation-amc.jsonl,83,1,0.0,0.4819,0.4819
+/home/ckpt/qwen1.5b-paper-ours-4-2-1-2-k10-seed42/_actor_global_step100,omni_math_500_seed0.jsonl,499,1,0.0,0.2906,0.2906
+/home/ckpt/qwen1.5b-paper-ours-4-2-1-2-k10-seed42/_actor_global_step100,olympiad_bench.jsonl,673,1,0.0,0.4146,0.4146
