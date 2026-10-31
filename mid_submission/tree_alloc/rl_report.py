@@ -3,12 +3,13 @@
   python -m tree_alloc.rl_report results/rl
 
 Reads eval.csv (rows appended by solve_rate.py --summary), train_logs/<run>.jsonl and gpu_mem/<run>.log. Writes:
-  eval_table.csv    one row per (run, step, decoding): accuracy on MATH500 / AMC / Omni-MATH, pass@8 when sampled
+  eval_table.csv    one row per (run, step, decoding): accuracy on MATH500 / AMC / Omni-MATH / OlympiadBench (paper
+                    reruns only), pass@8 when sampled
   train_curves.csv  one row per (run, step); for a resumed run the last attempt's line for a step wins
   runs.csv          per run: steps logged, peak GPU memory of our processes (MiB)
   paired.csv        if per_problem/*.jsonl exist (solve_rate.py --out): each model's accuracy minus the base model's
                     on the same problems, with a 95% paired-bootstrap CI over problems (as Task 2's Table 2);
-                    data=all pools the three benchmarks (1,082 problems)
+                    data=all pools the benchmarks (1,082 problems; 1,757 with OlympiadBench)
 """
 from __future__ import annotations
 
@@ -21,9 +22,14 @@ import sys
 
 from .metrics import paired_bootstrap
 
-DATA = {"MATH500.jsonl": "math500", "aimo-validation-amc.jsonl": "amc", "omni_math_500_seed0.jsonl": "omni"}
+DATA = {"MATH500.jsonl": "math500", "aimo-validation-amc.jsonl": "amc", "omni_math_500_seed0.jsonl": "omni",
+        "olympiad_bench.jsonl": "olympiad"}
+BENCHES = list(DATA.values())
 TRAIN_COLS = ["pass_at_1", "pass_rate", "reward", "policy_loss", "grad_norm", "response_length", "response_entropy",
-              "response_overlong_ratio", "generate_time", "rollout_time"]
+              "response_overlong_ratio", "generate_time", "rollout_time",
+              # added for the paper reruns (empty for earlier runs)
+              "adv_mean", "adv_abs", "lr", "train_time", "gen_tokens", "trained_tokens", "generated_responses",
+              "trained_responses", "prompts_all_correct", "prompts_all_wrong", "truncated", "kl", "resumed_from"]
 
 
 def run_step(model):
@@ -42,7 +48,7 @@ def main(d):
         row[DATA[r["data"]]] = round(100 * float(r["mean_acc"]), 2)
         if r["n"] != "1":
             row[f"{DATA[r['data']]}_pass@{r['n']}"] = round(100 * float(r["pass_at_n"]), 2)
-    cols = ["run", "step", "decoding", "math500", "amc", "omni", "math500_pass@8", "amc_pass@8", "omni_pass@8"]
+    cols = ["run", "step", "decoding"] + BENCHES + [f"{b}_pass@8" for b in BENCHES]
     with open(os.path.join(d, "eval_table.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, cols)
         w.writeheader()
@@ -63,8 +69,10 @@ def main(d):
             mem = os.path.join(d, "gpu_mem", run + ".log")
             peak = max((int(l.split()[1]) for l in open(mem) if len(l.split()) == 2), default=None) \
                 if os.path.exists(mem) else None
+            resumes = sorted({x["resumed_from"] for x in lines if x.get("resumed_from")})  # fresh-Adam restarts
             runs.append({"run": run, "steps_logged": len(by_step), "max_step": max(by_step, default=0),
-                         "log_lines": len(lines), "peak_gpu_mem_mib": peak})
+                         "log_lines": len(lines), "peak_gpu_mem_mib": peak,
+                         "resumed_from": " ".join(map(str, resumes))})
     with open(os.path.join(d, "runs.csv"), "w", newline="") as f:
         w = csv.DictWriter(f, list(runs[0]))
         w.writeheader()
@@ -82,7 +90,7 @@ def main(d):
             w = csv.writer(f)
             w.writerow(["model", "data", "problems", "acc", "base_acc", "diff", "ci_lo", "ci_hi"])
             for name in sorted(pp):
-                for bench in ("math500", "amc", "omni", "all"):  # all: pooled over the three benchmarks' problems
+                for bench in BENCHES + ["all"]:  # all: pooled over the benchmarks' problems
                     pool = lambda m: {f"{k}/{i}": v for k, d in pp[m].items() for i, v in d.items()}  # noqa: E731
                     a, b = (pool(name), pool("base_n8")) if bench == "all" else (pp[name].get(bench), pp["base_n8"].get(bench))
                     if name == "base_n8" or not a or not b:

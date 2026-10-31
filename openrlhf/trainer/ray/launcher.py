@@ -53,8 +53,29 @@ class DistributedTorchRayActor:
         return self._master_addr, self._master_port
 
 
+def _hold_gpu_memory(expandable: bool):
+    """Shared GPUs (TREERL_HOLD_GPU=1): once this process has GPU memory, keep it, so another user's job cannot take
+    it between the rollout, the log-prob pass and training (which made earlier runs fail with out-of-memory).
+    empty_cache becomes a no-op, so nothing is handed back. expandable: also use expandable segments, which keep the
+    footprint at the true peak (without them, varying sequence lengths fragment the cache: the reference model reached
+    33 GB). Only for processes that share no tensors over CUDA IPC: expandable segments make IPC fail here
+    ("pidfd_getfd: Operation not permitted"), and the actor sends its weights to vLLM that way. Memory only: results
+    are unchanged."""
+    if expandable:
+        try:
+            torch.cuda.memory._set_allocator_settings("expandable_segments:True")
+        except Exception as e:  # older torch: holding still works, with more fragmentation
+            print("hold GPU: expandable segments not set:", e)
+    torch.cuda.empty_cache = lambda: None
+    print("hold GPU: this process keeps its GPU memory (TREERL_HOLD_GPU=1)")
+
+
 class BasePPORole(DistributedTorchRayActor):
+    _hold_expandable = False  # see _hold_gpu_memory; True where no CUDA IPC is used
+
     def _setup_distributed(self, strategy: DeepspeedStrategy):
+        if os.environ.get("TREERL_HOLD_GPU"):  # before this process's first GPU allocation
+            _hold_gpu_memory(self._hold_expandable)
         # configure strategy
         self.strategy = strategy
         
@@ -66,6 +87,8 @@ class BasePPORole(DistributedTorchRayActor):
 
 @ray.remote(num_gpus=1)
 class ReferenceModelRayActor(BasePPORole):
+    _hold_expandable = True  # shares no tensors over CUDA IPC
+
     def init_model_from_pretrained(self, strategy: DeepspeedStrategy, pretrain):
         self._setup_distributed(strategy)
         model = Actor(
@@ -90,7 +113,11 @@ class ReferenceModelRayActor(BasePPORole):
         device = torch.cuda.current_device()
         with torch.no_grad():
             log_probs = self.model(sequences.to(device), num_actions, attention_mask.to(device), return_output)
-        return log_probs.to("cpu")
+        log_probs = log_probs.to("cpu")
+        # Hand this forward's memory (fp32 logits over a 152k vocabulary) back to the shared GPU: otherwise the cache
+        # stays at its peak (33 GB seen on one GPU) and the actor's optimizer step runs out of memory.
+        torch.cuda.empty_cache()
+        return log_probs
 
     def update_weight(self, name, dtype, shape, empty_cache=False):
         # Broadcast weight to all vllm workers from source rank 0 (actor model)

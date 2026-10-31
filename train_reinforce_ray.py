@@ -30,6 +30,14 @@ def multi_reward_fn(rewards: List[torch.Tensor]):
 def _validate_args(args):
     assert args.advantage_estimator != "grpo" or args.l == 0, \
         "GRPO is defined on a group of independent samples: use --l 0 (no forks), --m = group size"
+    if args.phase2_k > 0:
+        assert args.use_entropy_tree, "Phase II expands the EPTree: --use_entropy_tree"
+        assert 0 <= args.phase2_lambda <= 1, f"--phase2_lambda must be in [0, 1], got {args.phase2_lambda}"
+        assert args.phase2_horizon >= 1, f"--phase2_horizon must be >= 1, got {args.phase2_horizon}"
+    if args.use_entropy_tree:
+        leaves = args.m + args.l * args.m * args.n * args.t + args.phase2_k  # n = (n - k) + k
+        assert args.num_trace_per_sample <= leaves, \
+            f"--num_trace_per_sample {args.num_trace_per_sample} > {leaves} leaves per tree"
     actor_world_size = args.actor_num_nodes * args.actor_num_gpus_per_node
 
     assert (
@@ -37,6 +45,8 @@ def _validate_args(args):
     ) == 0, f"actor_world_size must be power of 2, got {actor_world_size}"
     assert args.zero_stage != 3 or args.vllm_num_engines > 0, f"ZeRO-3 is only supported when vLLM enabled"
 
+    # the KL reference is the starting model; --resume below replaces args.pretrain with the newest checkpoint
+    args.ref_pretrain = args.pretrain
     if args.resume:
         # 检测 args.save_path 有没有 _actor_global_step，如果有的话，就取最大的
         import os
@@ -145,7 +155,7 @@ def train(args):
     # init reference/reward/actor model
     refs = []
     if ref_model is not None:
-        refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.pretrain))
+        refs.extend(ref_model.async_init_model_from_pretrained(strategy, args.ref_pretrain))
     refs.extend(actor_model.async_init_model_from_pretrained(strategy, args.pretrain))
     if not args.remote_rm_url:
         for reward_model, reward_pretrain in zip(reward_models, reward_pretrains):
@@ -393,6 +403,13 @@ if __name__ == "__main__":
     parser.add_argument("--advantage_estimator", choices=["treerl", "grpo"], default="treerl",
                         help="treerl: the tree's per-segment values; grpo: (r - mean) / std over each question's "
                              "group of independent samples (DeepSeekMath), needs --l 0")
+    # Phase II: novelty-aware credit-guided expansion of the EPTree (openrlhf/trainer/ppo_utils/credit_aware_tree.py)
+    parser.add_argument("--phase2_k", type=int, default=0,
+                        help="k extra rollouts per tree after EPTree's n - k leaves; 0 = plain EPTree")
+    parser.add_argument("--phase2_lambda", type=float, default=0.5,
+                        help="J(v) = lambda * novelty(parent(v)) + (1 - lambda) * credit(v)")
+    parser.add_argument("--phase2_horizon", type=int, default=20,
+                        help="h: novelty = P(a new rollout differs from every observed one within h tokens)")
  
     args = parser.parse_args()
     train(args)

@@ -356,3 +356,9 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+
+# local only
+diffs/
+diff.sh
+ANLP_final_proposal*.pdf
