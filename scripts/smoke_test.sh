@@ -72,7 +72,7 @@ has grpo && train grpo grpo "16 0 0 0" 1 2 ADV=grpo
 if has eval; then
 echo "== evaluation: 4 problems per benchmark, 2 samples each"
 (cd mid_submission && CUDA_VISIBLE_DEVICES=$GPU HF_HUB_OFFLINE=1 python solve_rate.py \
-    --model Qwen/Qwen2.5-Math-1.5B-Instruct --sample 4 --n 2 --temperature 1.0 --gpu_mem ${EVAL_MEM:-0.28} \
+    --model ${MODEL:-Qwen/Qwen2.5-Math-1.5B-Instruct} --sample 4 --n 2 --temperature 1.0 --gpu_mem ${EVAL_MEM:-0.28} \
     --data ../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl \
            ../datasets/eval/olympiad_bench.jsonl \
     --summary $OUT/eval.csv --out $OUT/eval.jsonl > $OUT/eval.log 2>&1)

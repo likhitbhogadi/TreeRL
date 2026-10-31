@@ -29,7 +29,9 @@ TRAIN_COLS = ["pass_at_1", "pass_rate", "reward", "policy_loss", "grad_norm", "r
               "response_overlong_ratio", "generate_time", "rollout_time",
               # added for the paper reruns (empty for earlier runs)
               "adv_mean", "adv_abs", "lr", "train_time", "gen_tokens", "trained_tokens", "generated_responses",
-              "trained_responses", "prompts_all_correct", "prompts_all_wrong", "truncated", "kl", "resumed_from"]
+              "trained_responses", "prompts_all_correct", "prompts_all_wrong", "truncated", "kl", "resumed_from",
+              # unclipped drift from the reference model (the logged kl is clipped and signed)
+              "kl_k3", "log_ratio_abs", "kl_clip_frac"]
 
 
 def run_step(model):

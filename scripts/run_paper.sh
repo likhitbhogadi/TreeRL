@@ -27,8 +27,16 @@ LR=${LR:-1.5e-6}
 KL=${KL:-1e-4}                 # paper's KL coefficient; loads a reference model (the released script used 0)
 SEED=${SEED:-42}               # repetitions: SEED=1, 2, ... (part of the run names)
 ONLY=${ONLY:-treerl chainrl grpo}
+# MODEL: the starting model. Each model has its own run names, training data, stage markers and result files;
+# the Instruct model keeps the original names (qwen1.5b-paper-*, results/rl_paper_*).
+MODEL=${MODEL:-Qwen/Qwen2.5-Math-1.5B-Instruct}
+case $MODEL in
+  Qwen/Qwen2.5-Math-1.5B-Instruct) MNAME=qwen1.5b SUF= ;;
+  Qwen/Qwen2.5-Math-1.5B)          MNAME=qwen1.5b-mathbase SUF=_mathbase ;;  # no RL by Qwen (the paper starts from SFT)
+  *) [ -n "$MNAME" ] && [ -n "$SUF" ] || { echo "MODEL=$MODEL: also set MNAME (run-name prefix, must contain qwen) and SUF"; exit 1; } ;;
+esac
 GPU=${GPU:-}                   # pin to one GPU (to run two instances side by side); empty: any GPU with free memory
-DATA=${DATA:-$ROOT/mid_submission/data/train_30k_mixed_12k.jsonl}  # RERUN_PAPER.md, step 1
+DATA=${DATA:-$ROOT/mid_submission/data/train_30k_mixed_12k$SUF.jsonl}  # RERUN_PAPER.md, step 1 (built with $MODEL)
 CKPT=${CKPT:-$([ -d /scratch ] && echo /scratch/$USER/treerl_ckpt || echo $ROOT/ckpt)}  # ~3 GB per checkpoint
 SAVE_STEPS=${SAVE_STEPS:-25}   # bounds the work lost to a crash (~2 h of TreeRL)
 EVAL_EVERY=${EVAL_EVERY:-50}
@@ -39,14 +47,14 @@ EVAL_MEM=${EVAL_MEM:-0.28}     # vLLM's share of the GPU during evaluation
 TRIES=${TRIES:-6}
 STALL=${STALL:-3600}           # seconds without a training step before a run is restarted (a TreeRL step is ~5 min)
 # ADAM_OFFLOAD is read by the launcher from the environment (default: CPU Adam)
-COMMON="ROLLOUT=$ROLLOUT STEPS=$STEPS MAX_LEN=3072 LR=$LR KL=$KL SEED=$SEED SAVE_STEPS=$SAVE_STEPS
+COMMON="MODEL=$MODEL ROLLOUT=$ROLLOUT STEPS=$STEPS MAX_LEN=3072 LR=$LR KL=$KL SEED=$SEED SAVE_STEPS=$SAVE_STEPS
         KEEP_VLLM=${KEEP_VLLM-1} VLLM_MEM=${VLLM_MEM:-0.25}"
 EVAL_SETS="../datasets/eval/MATH500.jsonl ../datasets/eval/aimo-validation-amc.jsonl data/omni_math_500_seed0.jsonl
            ../datasets/eval/olympiad_bench.jsonl"
-DONE=$CKPT/.done_paper  # stage markers live with the checkpoints they describe
-PP=results/rl_paper_per_problem          # 8-sample per-problem results (relative to mid_submission/), paired vs base_n8
-PPG=results/rl_paper_per_problem_greedy  # greedy per-problem results, paired vs base_greedy
-SUMMARY=results/rl_paper_eval.csv        # one row per (model, benchmark), as results/rl_eval.csv for the earlier runs
+DONE=$CKPT/.done_paper$SUF  # stage markers live with the checkpoints they describe
+PP=results/rl_paper${SUF}_per_problem          # 8-sample per-problem results (relative to mid_submission/), paired vs base_n8
+PPG=results/rl_paper${SUF}_per_problem_greedy  # greedy per-problem results, paired vs base_greedy
+SUMMARY=results/rl_paper${SUF}_eval.csv        # one row per (model, benchmark), as results/rl_eval.csv for the earlier runs
 mkdir -p $DONE $CKPT mid_submission/$PP mid_submission/$PPG
 FAILED=()  # stages that did not finish, reported at the end
 TAGS=()
@@ -109,7 +117,7 @@ train() {  # train <tag> <"M N L T"> [VAR=value overrides]; 1: not finished afte
   local dir=$CKPT/$1
   # the settings that define the run: a folder holding a run with other settings is never resumed or reused
   local cfg="tree=$2 ${*:3} steps=$STEPS rollout=$ROLLOUT lr=$LR kl=$KL seed=$SEED max_len=3072 \
-data=$(basename $DATA) data_cksum=$(cksum < $DATA | cut -d' ' -f1)"
+data=$(basename $DATA) data_cksum=$(cksum < $DATA | cut -d' ' -f1)${SUF:+ model=$MODEL}"
   mkdir -p $dir
   if [ -f $dir/run_config ]; then
     if [ "$(cat $dir/run_config)" != "$cfg" ]; then
@@ -152,14 +160,14 @@ data=$(basename $DATA) data_cksum=$(cksum < $DATA | cut -d' ' -f1)"
 }
 
 SAMPLED="--n 8 --temperature 1.0"
-evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base_greedy $PPG || FAILED+=("eval base_greedy")
-evaluate Qwen/Qwen2.5-Math-1.5B-Instruct base_n8 $PP $SAMPLED || FAILED+=("eval base_n8")
+evaluate $MODEL base_greedy $PPG || FAILED+=("eval base_greedy")
+evaluate $MODEL base_n8 $PP $SAMPLED || FAILED+=("eval base_n8")
 # tags contain "qwen": the released code picks the model family from the checkpoint path
 for method in $ONLY; do
   case $method in
-    treerl)  tag=qwen1.5b-paper-treerl-6-2-1-2-seed$SEED; tree="6 2 1 2"; extra= ;;
-    chainrl) tag=qwen1.5b-paper-chainrl-16-seed$SEED;     tree="16 0 0 0"; extra= ;;
-    grpo)    tag=qwen1.5b-paper-grpo-16-seed$SEED;        tree="16 0 0 0"; extra=ADV=grpo ;;
+    treerl)  tag=$MNAME-paper-treerl-6-2-1-2-seed$SEED; tree="6 2 1 2"; extra= ;;
+    chainrl) tag=$MNAME-paper-chainrl-16-seed$SEED;     tree="16 0 0 0"; extra= ;;
+    grpo)    tag=$MNAME-paper-grpo-16-seed$SEED;        tree="16 0 0 0"; extra=ADV=grpo ;;
     *) echo "unknown method $method"; FAILED+=("unknown method $method"); continue ;;
   esac
   TAGS+=($tag)

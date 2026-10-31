@@ -47,7 +47,8 @@ def train(method, run_dir, log_path, rc, steps, prompts, tree, kl):
     if not check(len(steps_log) == steps, f"train_log.jsonl: {len(steps_log)} of {steps} steps"):
         return
     keys = ["policy_loss", "grad_norm", "kl", "lr", "train_time", "rollout_time", "gen_tokens", "trained_tokens",
-            "trained_responses", "generated_responses", "adv_mean", "adv_abs", "resumed_from", "pass_at_1"]
+            "trained_responses", "generated_responses", "adv_mean", "adv_abs", "resumed_from", "pass_at_1",
+            "kl_k3", "log_ratio_abs", "kl_clip_frac"]
     missing = sorted({k for s in steps_log for k in keys if k not in s})
     check(not missing, f"every step logs {', '.join(keys)}" + (f" (missing: {missing})" if missing else ""))
     per_step = prompts * leaves
@@ -58,6 +59,8 @@ def train(method, run_dir, log_path, rc, steps, prompts, tree, kl):
               for s in steps_log), "loss and KL finite")
     if kl > 0 and steps >= 3:  # step 1 trains at lr 0 (warmup), so step 3 is the first rollout of a changed policy
         check(abs(steps_log[-1]["kl"]) > 0, f"KL after the policy changed: {steps_log[-1]['kl']:.2e}", warn=True)
+    check(all(s.get("kl_k3", -1) >= 0 and 0 <= s.get("kl_clip_frac", -1) <= 1 for s in steps_log),
+          "unclipped drift logged: kl_k3 >= 0, kl_clip_frac in [0, 1]")
     check(all(s.get("resumed_from") == 0 for s in steps_log), "not resumed")
 
     trees = read_jsonl(os.path.join(run_dir, "trees.jsonl"))

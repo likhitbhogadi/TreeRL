@@ -190,9 +190,15 @@ def compute_reward(
 
 
 def log_probs_from_logits(logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
-    log_probs = F.log_softmax(logits, dim=-1)
-    log_probs_labels = log_probs.gather(dim=-1, index=labels.unsqueeze(-1))
-    return log_probs_labels.squeeze(-1)
+    # FP32 log-softmax (the model's logits are BF16), one sequence at a time: an FP32 copy of a whole batch's
+    # logits would take >10 GB. Returns FP32 log-probs. (Was F.log_softmax on the BF16 logits; tested on the L40S,
+    # the parameter gradients of the two agree to cosine 0.9998: RERUN_CODE_CHANGES.md.)
+    out = []
+    for row_logits, row_labels in zip(logits, labels):
+        row_logits = row_logits.float()
+        picked = row_logits.gather(dim=-1, index=row_labels.unsqueeze(-1)).squeeze(-1)
+        out.append(picked - torch.logsumexp(row_logits, dim=-1))
+    return torch.stack(out)
 
 
 def masked_mean(tensor: torch.Tensor, mask: torch.Tensor, dim: int = None) -> torch.Tensor:

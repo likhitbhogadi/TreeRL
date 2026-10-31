@@ -45,7 +45,7 @@ uv pip install --torch-backend=cu129 transformers==5.17.0 deepspeed==0.19.7 ray=
 uv pip freeze > $BASE/ckpt/env_freeze.txt  # the exact versions, kept with the results
 
 echo "== model"
-python -c "from huggingface_hub import snapshot_download as d; print(d('Qwen/Qwen2.5-Math-1.5B-Instruct'))"
+python -c "from huggingface_hub import snapshot_download as d; [print(d(m)) for m in ('Qwen/Qwen2.5-Math-1.5B-Instruct', 'Qwen/Qwen2.5-Math-1.5B')]"
 
 echo "== checks"
 python - <<'EOF'

@@ -68,8 +68,11 @@ def main():
     gen = VLLMGenerator(a.model, max_model_len=MAX_PROMPT + a.max_tokens, seed=a.seed, gpu_memory_utilization=a.gpu_mem)
     ver = Verifier()
     n = 1 if a.temperature == 0 else a.n
+    # stop at the chat turn's end as RL does (its eos_tokens): the base Qwen2.5-Math-1.5B's own config stops only at
+    # <|endoftext|>. The Instruct model already stops at both, so its results are unchanged.
+    stops = [gen.tok.convert_tokens_to_ids(t) for t in ("<|im_end|>", "<|endoftext|>")]
     sp = SamplingParams(n=n, temperature=a.temperature, top_p=a.top_p if a.temperature else 1.0,
-                        max_tokens=a.max_tokens, seed=a.seed)
+                        max_tokens=a.max_tokens, seed=a.seed, stop_token_ids=stops)
     mixed = open(a.keep_mixed, "w") if a.keep_mixed else None
     excluded = {_norm(p.question) for f in a.exclude for p in load_problems(f)}
 

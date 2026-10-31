@@ -20,6 +20,26 @@ from .experience_maker import RemoteExperienceMaker, Experience, NaiveExperience
 logger = init_logger(__name__)
 
 
+def drift_info(experiences, action_mask):
+    """How far the policy is from the reference (starting) model on the sampled tokens, unclipped, per response.
+    The logged "kl" is what enters the reward: the signed log ratio clipped to +-0.5 (compute_approx_kl). Under
+    top-p sampling its mean can be negative, so it doesn't measure drift. These do:
+      kl_k3          mean of exp(-r) + r - 1 (r = log pi - log pi_ref; >= 0 per token; Schulman's k3 KL estimate)
+      log_ratio_abs  mean |r|
+      kl_clip_frac   share of tokens with |r| > 0.5, where the KL reward is clipped"""
+    base = experiences.get("base_action_log_probs")
+    if base is None:
+        return {}
+    try:
+        r = (experiences["action_log_probs"].float() - base.float()) * action_mask
+        return {"kl_k3": masked_mean(torch.expm1(-r) + r, action_mask, dim=-1),
+                "log_ratio_abs": masked_mean(r.abs(), action_mask, dim=-1),
+                "kl_clip_frac": masked_mean((r.abs() > 0.5).float(), action_mask, dim=-1)}
+    except Exception as e:  # logging must never stop a run
+        print("drift_info failed:", e)
+        return {}
+
+
 class NaiveExperienceMakerReinforce(NaiveExperienceMaker):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -267,6 +287,7 @@ class RemoteExperienceMakerReinforce(RemoteExperienceMaker):
                 # and of its magnitude: the size of the learning signal per response
                 "adv_mean": masked_mean(reward, action_mask, dim=-1),
                 "adv_abs": masked_mean(reward.abs(), action_mask, dim=-1),
+                **drift_info(experiences, action_mask),
             }
         else:
             info = {
